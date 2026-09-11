@@ -41,30 +41,28 @@ function synth(st) {
   const w = document.getElementById('f').contentWindow;
   for (let i = 0; i < 240 && !(w.mirrorPuppet && w.mirrorPuppet.backend); i++) await sleep(250);
   const mp = w.mirrorPuppet, doc = w.document; await sleep(1500); mp.stopCamera();
+  if (mp.state.W < 32) { mp.state.W = 1280; mp.state.H = 720; }   // the fake camera's first frame can be 2x2; the synthetic figure needs a real size
   const res = synth(mp.state); const P=(x,y,z=0)=>({x,y,z}); res.face[234]=P(.46,.28,-.01); res.face[454]=P(.54,.28,-.01);
-  for (let i = 0; i < 160 && !mp.phone.det; i++) await sleep(250);
-  log('PHONE detector loaded', !!mp.phone.det, '| status', doc.getElementById('status').textContent);
-  // auto mode: a fake 'cell phone' box around the synthetic left palm must mark that hand as holding
+  for (let i = 0; i < 240 && !(mp.phone.worker || mp.phone.det); i++) await sleep(250);
+  log('PHONE detector ready', !!(mp.phone.worker || mp.phone.det), '| worker', !!mp.phone.worker, '| delegate', mp.phone.delegate, '| status', doc.getElementById('status').textContent);
+  // acceptance: a phone-shaped box around the synthetic left palm, twice in a row -> the left hand holds, the right does not
   const W = mp.state.W, H = mp.state.H, hL = res.hands[0].img, px = (hL[0].x + hL[9].x) / 2 * W, py = (hL[0].y + hL[9].y) / 2 * H;
-  const hpx = Math.hypot((hL[9].x - hL[0].x) * W, (hL[9].y - hL[0].y) * H);   // the synthetic hand is small: a phone-sized box for it
-  mp.phone.boxes = [{ originX: px - hpx * 0.4, originY: py - hpx * 0.8, width: hpx * 0.8, height: hpx * 1.6 }];
-  for (let i = 0; i < 5; i++) mp.present(res);
-  log('PHONE auto: chip', doc.getElementById('chipPhone').classList.contains('on'), '| L seen', mp.phone.frame - mp.phone.seen.L < 30, '| R seen', mp.phone.frame - mp.phone.seen.R < 30);
-  // on the camera with a box: the phone must sit at the box centre, upright, sized by the box
+  const box = { originX: px - 40, originY: py - 80, width: 80, height: 160, score: 0.8 };
+  mp.acceptBoxes([box], res.hands); mp.present(res);
+  log('PHONE after one pass: holding L', mp.phone.frame - mp.phone.seen.L < mp.phone.hold, '(expect false: needs two passes)');
+  mp.acceptBoxes([box], res.hands); for (let i = 0; i < 3; i++) mp.present(res);
+  log('PHONE after two passes: chip', doc.getElementById('chipPhone').classList.contains('on'), '| L holds', mp.phone.frame - mp.phone.seen.L < mp.phone.hold, '| R holds', mp.phone.frame - mp.phone.seen.R < mp.phone.hold);
+  mp.acceptBoxes([{ ...box, score: 0.35 }], res.hands); mp.acceptBoxes([{ ...box, score: 0.35 }], res.hands);
+  mp.acceptBoxes([{ originX: px - 100, originY: py - 60, width: 240, height: 80, score: 0.9 }], res.hands);   // an air-conditioner shape (3:1, not phone-shaped) - ignored
+  log('PHONE weak and wide boxes ignored: cand L', mp.phone.cand.L, '(expect 0) | wide box aspect', (240/80).toFixed(1));
   { const sel = doc.getElementById('avatarMode'); sel.value = 'overlay'; await sel.onchange(); for (let i = 0; i < 400 && !mp.avatar.root; i++) await sleep(100); }
-  for (let i = 0; i < 10; i++) mp.present(res);
-  { const T = mp.THREE, ax = v => v.toArray().map(n => n.toFixed(2)).join(','); const ip = i => mp.avatar.imagePoints.get('L' + i);
-    const c = new T.Vector3(); for (const i of [0,5,9,13,17]) c.add(ip(i)); c.multiplyScalar(0.2);
-    const long = ip(5).clone().sub(ip(17)).normalize(), fingers = ip(9).clone().sub(ip(0)), normal = new T.Vector3().crossVectors(long, fingers).normalize();
-    if (normal.dot(ip(4).clone().sub(c)) < 0) normal.negate(); const short = new T.Vector3().crossVectors(normal, long).normalize();
-    const mq = mp.phone.meshes.L.quaternion, X = new T.Vector3(1,0,0).applyQuaternion(mq), Y = new T.Vector3(0,1,0).applyQuaternion(mq), Z = new T.Vector3(0,0,1).applyQuaternion(mq);
-    log('PHONE app debug', JSON.stringify(mp.phone.debug, (k, v) => typeof v === 'number' ? +v.toFixed(2) : v));
-    log('PHONE frame: long', ax(long), '| short', ax(short), '| normal', ax(normal), '| mesh X', ax(X), 'Y', ax(Y), 'Z', ax(Z), '| mirror', mp.state.mirror); }
-  { const m = mp.phone.meshes.L, b = mp.phone.box.L, palm = mp.avatar.imagePoints.get('L0'), pm = palm && palm.clone(), dist = pm ? (mp.state.mirror ? (pm.x *= -1, m.position.distanceTo(pm)) : m.position.distanceTo(pm)) : -1;
-    log('PHONE in-hand placement: visible', m.visible, '| box kept', !!b, '| near the wrist (dist/handlen)', (dist / (hpx / W)).toFixed(2), '| scale', m.scale.x.toFixed(4), 'expected', (hpx * 1.6 / W / 1.47).toFixed(4), '| upright x-axis y', Math.abs(new mp.THREE.Vector3(1,0,0).applyQuaternion(m.quaternion).y).toFixed(2));
-    mp.renderer.render(mp.scene, mp.renderCamera()); await post('phone-box-overlay.png', mp.renderer.domElement.toDataURL('image/png')); await post('phone-box-2d.png', mp.canvases().overlay.toDataURL('image/png')); }
-  mp.phone.boxes = []; for (let i = 0; i < 35; i++) mp.present(res);
-  log('PHONE auto: gone after 35 frames without a box', !doc.getElementById('chipPhone').classList.contains('on'));
+  mp.acceptBoxes([box], res.hands); mp.acceptBoxes([box], res.hands); for (let i = 0; i < 10; i++) mp.present(res);
+  { const T = mp.THREE, m = mp.phone.meshes.L, X = new T.Vector3(1,0,0).applyQuaternion(m.quaternion), Z = new T.Vector3(0,0,1).applyQuaternion(m.quaternion);
+    const palm = mp.avatar.imagePoints.get('L0').clone(); if (mp.state.mirror) palm.x *= -1; const hpx = Math.hypot((hL[9].x - hL[0].x) * W, (hL[9].y - hL[0].y) * H);
+    log('PHONE in-hand placement: visible', m.visible, '| near the wrist (dist/handlen)', (m.position.distanceTo(palm) / (hpx / W)).toFixed(2), '| scale = hand length', (m.scale.x / (hpx / W)).toFixed(2), '| upright x-axis y', Math.abs(X.y).toFixed(2), '| back to viewer z', Z.z.toFixed(2));
+    mp.renderer.render(mp.scene, mp.renderCamera()); await post('phone-box-overlay.png', mp.renderer.domElement.toDataURL('image/png')); }
+  for (let i = 0; i < mp.phone.hold + 5; i++) mp.present(res);
+  log('PHONE gone after the hold without new boxes', !doc.getElementById('chipPhone').classList.contains('on'));
   doc.getElementById('optPhone').value = 'L'; doc.getElementById('optPhone').onchange();
   for (const mode of ['skeleton', 'character', 'overlay']) {
     const sel = doc.getElementById('avatarMode'); sel.value = mode; await sel.onchange();

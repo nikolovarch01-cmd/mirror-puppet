@@ -236,3 +236,18 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
 - Eyes, final: the straight-ahead frame uses the world's up (the rest pose is upright) — head→eyes and
   jaw→eyes both pointed down and sank the pupils. Verified: centred pupils in the close-up render.
 - The phone-alone render in the harness hides the lights too (black phone) — orientation check only.
+
+## 2026-09-12 — phone detection in a worker, fixed-size phone, mirrored gaze (Claude)
+
+- The "cell phone" detector (EfficientDet-Lite0) now runs in a **classic Web Worker** (module workers
+  lack `importScripts`, which the library needs): the main thread hands it the library (`vision_bundle.cjs`),
+  the wasm pair and the model as bytes from the local store, then sends an `ImageBitmap` every 4th frame
+  while a hand is in view; boxes come back asynchronously. The picture never stalls for the detector.
+  Fallback: inline detector on the main thread when a worker cannot start.
+- A box counts only if ≥ 50 % sure, phone-shaped (long 1.4–2.8 × short, < 70 % of the picture), the palm
+  centre inside the box grown by 30 %; one box → one hand; a hand holds after **two agreeing passes** and
+  keeps holding 45 frames. No size estimate anywhere: the phone is always **1.47 hand lengths**, on the
+  palm side, tilted with the palm, long edge upright, back to the viewer (his rules).
+- Eyes: yaw is flipped when the view is mirrored (the reflected character is a reflection); vertical gaze
+  comes from Google's `eyeLookUp/Down` values (landmark lids as fallback) — it exists, it is just weaker.
+- Harnesses set a 1280×720 synthetic size when the fake camera's first frame is 2×2.

@@ -635,7 +635,7 @@ function updateEyes(res) {
   if (!on) return;
   const g = res && res.face && ui.face.checked ? (res.blend && res.blend.length ? gazeFromBlend(res.blend) : gazeFrom(res.face)) : { L: { yaw: 0, pitch: 0 }, R: { yaw: 0, pitch: 0 } };
   for (const side of ['L', 'R']) {
-    eyes.yaw[side] += (clamp(g[side].yaw, -0.6, 0.6) - eyes.yaw[side]) * 0.5;
+    eyes.yaw[side] += (clamp(g[side].yaw * (state.mirror ? -1 : 1), -0.6, 0.6) - eyes.yaw[side]) * 0.5;   // the mirrored character is a reflection
     eyes.pitch[side] += (clamp(g[side].pitch, -0.4, 0.4) - eyes.pitch[side]) * 0.5;
     _eq.setFromEuler(_ee.set(-eyes.pitch[side], eyes.yaw[side], 0, 'YXZ'));
     eyes[side].quaternion.copy(eyes[side].userData.base).multiply(_eq);
@@ -933,21 +933,94 @@ $('avatarRest').onclick = async () => {
 // 30 frames). The slab is placed from the 21 hand points alone, so the same maths serves the 2D
 // overlay, the 3D puppet and the character on the camera: long edge across the palm (index -> pinky),
 // lying on the palm side where the thumb curls, sized by the hand length (wrist -> middle knuckle).
-const phone = { det: null, boxes: [], seen: { L: -1e9, R: -1e9 }, box: {}, frame: 0, meshes: {} };
+const phone = { det: null, worker: null, busy: false, delegate: '', seen: { L: -1e9, R: -1e9 }, cand: { L: 0, R: 0 }, frame: 0, hold: 45, meshes: {}, lastHands: [] };
+// The detector runs in a worker (its own thread), so the picture never stalls while it thinks; the main
+// thread only sends a frame every 4th frame while a hand is in view, and takes the boxes back when they come.
+const phoneWorkerSrc = "self.exports = {}; let ObjectDetector = null;\n" +
+"let det = null;\n" +
+"self.onmessage = async e => {\n" +
+"  const m = e.data;\n" +
+"  if (m.type === 'init') {\n" +
+"    try {\n" +
+"      importScripts(URL.createObjectURL(new Blob([m.lib], { type: 'text/javascript' }))); ObjectDetector = self.exports.ObjectDetector;\n" +
+"      const fs = { wasmLoaderPath: URL.createObjectURL(new Blob([m.js], { type: 'text/javascript' })), wasmBinaryPath: URL.createObjectURL(new Blob([m.wasm], { type: 'application/wasm' })) };\n" +
+"      const opts = d => ({ baseOptions: { modelAssetBuffer: new Uint8Array(m.model), delegate: d }, runningMode: 'IMAGE', scoreThreshold: 0.4, maxResults: 4, categoryAllowlist: ['cell phone'] });\n" +
+"      try { det = await ObjectDetector.createFromOptions(fs, opts('GPU')); self.postMessage({ type: 'ready', delegate: 'GPU' }); }\n" +
+"      catch (err) { det = await ObjectDetector.createFromOptions(fs, opts('CPU')); self.postMessage({ type: 'ready', delegate: 'CPU' }); }\n" +
+"    } catch (err) { self.postMessage({ type: 'error', message: String((err && err.message) || err) }); }\n" +
+"    return;\n" +
+"  }\n" +
+"  if (m.type === 'frame') {\n" +
+"    let boxes = [];\n" +
+"    try { if (det) boxes = det.detect(m.bitmap).detections.map(d => ({ originX: d.boundingBox.originX, originY: d.boundingBox.originY, width: d.boundingBox.width, height: d.boundingBox.height, score: d.categories[0] ? d.categories[0].score : 0 })); }\n" +
+"    catch (err) { self.postMessage({ type: 'error', message: String((err && err.message) || err) }); }\n" +
+"    m.bitmap.close(); self.postMessage({ type: 'boxes', boxes });\n" +
+"  }\n" +
+"};\n";
 async function ensurePhoneDetector() {
-  if (phone.det || phone.loading) return; phone.loading = true;
+  if (phone.worker || phone.det || phone.loading) return; phone.loading = true;
   try {
-    const fs = await getFileset(), buf = await bigFile(MODEL.phone);
-    const opts = d => ({ baseOptions: { modelAssetBuffer: buf, delegate: d }, runningMode: 'VIDEO', scoreThreshold: 0.3, maxResults: 3, categoryAllowlist: ['cell phone'] });
-    try { phone.det = await ObjectDetector.createFromOptions(fs, opts('GPU')); }
-    catch (e) { console.warn('phone detector on GPU failed, CPU', e); phone.det = await ObjectDetector.createFromOptions(fs, opts('CPU')); }
+    const simd = FilesetResolver.isSimdSupported ? await FilesetResolver.isSimdSupported() : true;
+    const base = MPV + '/wasm/vision_wasm_' + (simd ? '' : 'nosimd_') + 'internal';
+    const [model, js, wasm, lib] = await Promise.all([bigFile(MODEL.phone), bigFile(base + '.js'), bigFile(base + '.wasm'), bigFile(MPV + '/vision_bundle.cjs')]);
+    const own = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([phoneWorkerSrc], { type: 'text/javascript' })));
+      const ready = new Promise((res, rej) => {
+        w.onmessage = e => { if (e.data.type === 'ready') res(e.data.delegate); else if (e.data.type === 'error') rej(new Error(e.data.message)); };
+        w.onerror = e => rej(new Error(e.message || 'worker error'));
+        setTimeout(() => rej(new Error('worker timeout')), 60000);
+      });
+      const bufs = [own(model), own(js), own(wasm), own(lib)];
+      w.postMessage({ type: 'init', model: bufs[0], js: bufs[1], wasm: bufs[2], lib: bufs[3] }, bufs);
+      phone.delegate = await ready; phone.worker = w;
+      w.onmessage = e => {
+        if (e.data.type === 'boxes') { phone.busy = false; acceptBoxes(e.data.boxes, phone.lastHands); }
+        else if (e.data.type === 'error') { console.warn('phone detector (worker):', e.data.message); phone.busy = false; }
+      };
+      w.onerror = e => { console.warn('phone worker died', e.message); phone.worker = null; phone.busy = false; };
+    } catch (e) {   // no worker (old browser): the detector runs on the main thread, less often
+      console.warn('phone detector worker failed, running inline', e);
+      const opts = d => ({ baseOptions: { modelAssetBuffer: await_(model), delegate: d }, runningMode: 'VIDEO', scoreThreshold: 0.4, maxResults: 4, categoryAllowlist: ['cell phone'] });
+      const fs = await getFileset();
+      try { phone.det = await ObjectDetector.createFromOptions(fs, opts('GPU')); phone.delegate = 'GPU (inline)'; }
+      catch (e2) { phone.det = await ObjectDetector.createFromOptions(fs, opts('CPU')); phone.delegate = 'CPU (inline)'; }
+    }
   } catch (e) { console.error('phone detector failed', e); note('phone detector did not start'); }
   phone.loading = false;
 }
-function detectPhones(ts, hands) {   // every 8th frame, only in 'auto' and only while a hand is in the picture
-  if (!phone.det || $('optPhone').value !== 'auto' || (phone.frame % 8) || !hands) return;
-  try { phone.boxes = phone.det.detectForVideo(video, ts).detections.map(d => d.boundingBox); }
-  catch (e) { console.warn('phone detect failed', e); phone.det = null; }
+const await_ = u8 => u8;   // (the inline fallback reuses the model bytes as they are)
+function detectPhones(ts, hands) {   // every 4th frame, only in 'auto', only while a hand is in the picture
+  if ($('optPhone').value !== 'auto' || !hands.length || (phone.frame % 4)) return;
+  phone.lastHands = hands;
+  if (phone.worker) {
+    if (phone.busy) return; phone.busy = true;
+    createImageBitmap(video).then(bm => phone.worker.postMessage({ type: 'frame', bitmap: bm }, [bm])).catch(() => { phone.busy = false; });
+  } else if (phone.det) {
+    try { acceptBoxes(phone.det.detectForVideo(video, ts).detections.map(d => ({ originX: d.boundingBox.originX, originY: d.boundingBox.originY, width: d.boundingBox.width, height: d.boundingBox.height, score: d.categories[0] ? d.categories[0].score : 0 })), hands); }
+    catch (e) { console.warn('phone detect failed', e); phone.det = null; }
+  }
+}
+// A box counts for a hand only if: it is at least 50 % sure, it is shaped like a phone (long side 1.4-2.8 x
+// the short side, not most of the picture), and the palm centre lies inside the box grown by 30 %. Each box
+// goes to one hand only, the one nearest its centre. A hand holds after two agreeing passes in a row, and
+// keeps holding for `hold` frames after the last one.
+function acceptBoxes(boxes, hands) {
+  const W = state.W, H = state.H, hit = { L: false, R: false };
+  for (const b of boxes) {
+    if (b.score < 0.5) continue;
+    const long = Math.max(b.width, b.height), short = Math.min(b.width, b.height);
+    if (short < 1 || long / short < 1.4 || long / short > 2.8 || long > 0.7 * Math.max(W, H)) continue;
+    let best = null;
+    for (const h of hands) {
+      const cx = (h.img[0].x + h.img[9].x) / 2 * W, cy = (h.img[0].y + h.img[9].y) / 2 * H, gx = b.width * 0.3, gy = b.height * 0.3;
+      if (cx < b.originX - gx || cx > b.originX + b.width + gx || cy < b.originY - gy || cy > b.originY + b.height + gy) continue;
+      const d = Math.hypot(b.originX + b.width / 2 - cx, b.originY + b.height / 2 - cy);
+      if (!best || d < best.d) best = { h, d };
+    }
+    if (best) hit[best.h.side] = true;
+  }
+  for (const s of ['L', 'R']) { if (hit[s]) { phone.cand[s]++; if (phone.cand[s] >= 2) phone.seen[s] = phone.frame; } else phone.cand[s] = 0; }
 }
 const phoneMat = new THREE.MeshStandardMaterial({ color: 0xe6e7ea, roughness: 0.35, metalness: 0.15 });   // a white back, like his
 const islandMat = new THREE.MeshStandardMaterial({ color: 0xd2d3d8, roughness: 0.5 });
@@ -998,25 +1071,11 @@ function phoneFrame(pts) {   // pts: 21 Vector3-like points -> { c, long, short,
   _ps.crossVectors(_pn, _pl).normalize();
   return { c: _pc, long: _pl, short: _ps, normal: _pn, L };
 }
-function holding(side) { return $('optPhone').value === side || ($('optPhone').value === 'auto' && phone.frame - phone.seen[side] < 30); }
+function holding(side) { return $('optPhone').value === side || ($('optPhone').value === 'auto' && phone.frame - phone.seen[side] < phone.hold); }
+// The phone is a fixed size (1.47 hand lengths long) and always in the hand: on the palm side, tilted with
+// the palm, its long edge along whichever palm axis stands more upright, its back towards the viewer.
 function updatePhones(res) {
   phone.frame++;
-  const W = state.W, H = state.H;
-  for (const h of res.hands) {   // for each hand: the one nearest box that is phone-sized for that hand and touches the palm
-    const cx = (h.img[0].x + h.img[9].x) / 2 * W, cy = (h.img[0].y + h.img[9].y) / 2 * H, hand = Math.hypot((h.img[9].x - h.img[0].x) * W, (h.img[9].y - h.img[0].y) * H);
-    let best = null;
-    for (const b of phone.boxes) {
-      const long = Math.max(b.width, b.height); if (long < hand * 0.8 || long > hand * 3.2) continue;   // an air conditioner is not a phone
-      const gx = b.width / 3, gy = b.height / 3;
-      const inside = cx > b.originX - gx && cx < b.originX + b.width + gx && cy > b.originY - gy && cy < b.originY + b.height + gy;
-      const d = Math.hypot(b.originX + b.width / 2 - cx, b.originY + b.height / 2 - cy);
-      if ((inside || d < hand * 0.8) && (!best || d < best.d)) best = { b, d };
-    }
-    if (!best) continue;
-    phone.seen[h.side] = phone.frame;
-    const o = phone.box[h.side], b = best.b;   // smoothed box
-    phone.box[h.side] = o ? { originX: o.originX + (b.originX - o.originX) * 0.5, originY: o.originY + (b.originY - o.originY) * 0.5, width: o.width + (b.width - o.width) * 0.5, height: o.height + (b.height - o.height) * 0.5 } : { ...b };
-  }
   let any = false;
   for (const side of ['L', 'R']) {
     const m = phoneMesh(side), h = res.hands.find(x => x.side === side);
@@ -1027,23 +1086,12 @@ function updatePhones(res) {
       if (pts.some(v => !v)) { m.visible = false; continue; }
     } else pts = handRig[side].pts;
     const f = phoneFrame(pts); if (!f) { m.visible = false; continue; }
-    const b = $('optPhone').value === 'auto' ? phone.box[side] : null;
-    if (isOverlay() && avatar.root) {   // in the hand: on the palm side, tilted with the palm, upright; size from the detector's box when it has one
-      if (flip) { f.c.x *= -1; f.long.x *= -1; f.short.x *= -1; f.short.negate(); f.normal.crossVectors(f.long, f.short); }
-      const L = b ? Math.max(b.width, b.height) / W / 1.47 : f.L;
-      // the phone's long edge is whichever palm axis stands more upright on the screen, pointing up
-      const up = Math.abs(f.long.y) >= Math.abs(f.short.y) ? f.long.clone() : f.short.clone(); if (up.y < 0) up.negate();
-      const side = new THREE.Vector3().crossVectors(f.normal, up).normalize(); up.crossVectors(side, f.normal).normalize();
-      m.position.copy(f.c).addScaledVector(f.normal, f.L * 0.35);
-      _pm.makeBasis(up, side, f.normal); m.quaternion.setFromRotationMatrix(_pm);   // right-handed: x = long edge (up), y = side, z = back towards the viewer
-      phone.debug = { long: f.long.toArray(), short: f.short.toArray(), up: up.toArray(), normal: f.normal.toArray(), L, flip };
-      m.scale.setScalar(L);
-    } else {
-      if (flip) { f.c.x *= -1; f.long.x *= -1; f.short.x *= -1; f.short.negate(); f.normal.crossVectors(f.long, f.short); }   // reflected, still right-handed
-      m.position.copy(f.c).addScaledVector(f.normal, f.L * 0.35);
-      _pm.makeBasis(f.long, f.short, f.normal); m.quaternion.setFromRotationMatrix(_pm);
-      m.scale.setScalar(f.L);
-    }
+    if (flip) { f.c.x *= -1; f.long.x *= -1; f.short.x *= -1; f.short.negate(); f.normal.crossVectors(f.long, f.short); }   // reflected, still right-handed
+    const up = Math.abs(f.long.y) >= Math.abs(f.short.y) ? f.long.clone() : f.short.clone(); if (up.y < 0) up.negate();
+    const sideV = new THREE.Vector3().crossVectors(f.normal, up).normalize(); up.crossVectors(sideV, f.normal).normalize();
+    m.position.copy(f.c).addScaledVector(f.normal, f.L * 0.35);
+    _pm.makeBasis(up, sideV, f.normal); m.quaternion.setFromRotationMatrix(_pm);   // right-handed: x = long edge (up), z = back towards the viewer
+    m.scale.setScalar(f.L);
     m.visible = true; any = true;
   }
   chips.phone.classList.toggle('on', any);
@@ -1095,16 +1143,7 @@ function draw2D(res) {
     }
   }
   for (const h of res.hands) {
-    const bx = $('optPhone').value === 'auto' ? phone.box[h.side] : null;
-    if (holding(h.side) && bx) {   // the phone where the detector saw it
-      octx.save(); octx.fillStyle = 'rgba(230,231,234,0.85)'; octx.strokeStyle = '#9a9ca3'; octx.lineWidth = 2 * s;
-      octx.beginPath(); octx.roundRect(bx.originX, bx.originY, bx.width, bx.height, Math.min(bx.width, bx.height) * 0.12); octx.fill(); octx.stroke();
-      const u = Math.min(bx.width, bx.height), ix = bx.originX + u * 0.1, iy = bx.originY + u * 0.1;
-      octx.fillStyle = '#d2d3d8'; octx.beginPath(); octx.roundRect(ix, iy, u * 0.42, u * 0.42, u * 0.08); octx.fill();
-      octx.fillStyle = '#0b1020';
-      for (const [dx, dy] of [[0.12, 0.12], [0.3, 0.12], [0.21, 0.3]]) { octx.beginPath(); octx.arc(ix + u * dx, iy + u * dy, u * 0.06, 0, Math.PI * 2); octx.fill(); }
-      octx.restore();
-    } else if (holding(h.side)) {   // no box: a rectangle across the palm, camera dot in a corner
+    if (holding(h.side)) {   // a rectangle across the palm, camera dot in a corner
       const q = h.img, X = i => q[i].x * W, Y = i => q[i].y * H;
       const cx = [0, 5, 9, 13, 17].reduce((a, i) => a + X(i), 0) / 5, cy = [0, 5, 9, 13, 17].reduce((a, i) => a + Y(i), 0) / 5;
       let lx = X(5) - X(17), ly = Y(5) - Y(17); const ll = Math.hypot(lx, ly) || 1; lx /= ll; ly /= ll;
@@ -1351,7 +1390,7 @@ function loop() {
     let res = null;
     const t0 = performance.now();
     try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
-    if (res) detectPhones(ts, res.hands.length);
+    if (res) detectPhones(ts, res.hands);
     const t1 = performance.now();
     if (res) { try { present(res); frames++; } catch (e) { console.error('present failed', e); note('draw error: ' + String((e && e.message) || e).slice(0, 80)); } }
     const t2 = performance.now();
@@ -1364,7 +1403,7 @@ function loop() {
 }
 
 // a small handle for testing from the console
-window.mirrorPuppet = { THREE, state, phone, eyes, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
+window.mirrorPuppet = { THREE, state, phone, eyes, acceptBoxes, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
 
 configureDisplay(); loadAvatar().catch(() => {});
 loop();

@@ -41,6 +41,7 @@ function synth(st) {
   const w = document.getElementById('f').contentWindow;
   for (let i = 0; i < 240 && !(w.mirrorPuppet && w.mirrorPuppet.backend); i++) await sleep(250);
   const mp = w.mirrorPuppet, doc = w.document; await sleep(1500); mp.stopCamera();
+  if (mp.state.W < 32) { mp.state.W = 1280; mp.state.H = 720; }   // the fake camera's first frame can be 2x2; the synthetic figure needs a real size
   const res = synth(mp.state); const P=(x,y,z=0)=>({x,y,z}); res.face[234]=P(.46,.28,-.01); res.face[454]=P(.54,.28,-.01);
   const sel = doc.getElementById('avatarMode'); sel.value = 'overlay'; await sel.onchange();
   for (let i = 0; i < 400 && !mp.avatar.root; i++) await sleep(100);
