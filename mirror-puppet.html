@@ -64,6 +64,13 @@ body.novideo .picture video{visibility:hidden}
   #expr{position:static;width:auto;margin:8px;flex:0 0 auto}
   #hint{display:none}
 }
+body.oncamera #view3d{display:none}
+body.oncamera #cam{display:flex}
+body.oncamera:not(.guides).character-ready #overlay{visibility:hidden}
+.picture canvas.character-canvas,body.mirror .picture canvas.character-canvas{transform:none;pointer-events:none;inset:auto;z-index:1}
+.chips{z-index:2}
+#expr{z-index:2}
+body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f1317bb;padding:3px 8px}
 </style>
 </head>
 <body class="mirror">
@@ -89,7 +96,8 @@ body.novideo .picture video{visibility:hidden}
     <option value="sep:CPU">3 models · CPU</option>
     <option value="holistic:CPU">combined · CPU</option>
   </select></label>
-  <label>Display <select id="avatarMode"><option value="skeleton">Skeleton</option><option value="character">Character</option></select></label>
+  <label>Display <select id="avatarMode"><option value="skeleton" selected>Skeleton</option><option value="character">Character 3D</option><option value="overlay">On camera</option></select></label>
+  <label><input type="checkbox" id="optGuides"> Guides on camera</label>
   <button id="avatarRest" title="Stop camera and inspect the character rest pose">Rest pose</button>
   <button id="btnSnap" title="Saves a picture of both views">Snapshot</button>
   </div>
@@ -351,13 +359,17 @@ function assignHands(hands, pose) {
 // ---------------------------------------------------------------- 3D scene
 const avatar = { root: null, bones: new Map(), rest: new Map(), promise: null, last: null, tracked: false, hip: null, scale: 1 };
 const view = $('view3d');
-const renderer = new THREE.WebGLRenderer({ antialias: !IS_MOBILE });
+const renderer = new THREE.WebGLRenderer({ antialias: !IS_MOBILE, alpha: true });
 renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio || 1, 2));
 view.appendChild(renderer.domElement);
 renderer.domElement.addEventListener('webglcontextlost', () => note('the 3D view lost its graphics context (low memory) - reload the page'));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1317);
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 30);
+const overlayCamera = new THREE.OrthographicCamera(-.5,.5,.5,-.5,.01,100);
+overlayCamera.position.z=10;
+const isOverlay = () => $('avatarMode').value === 'overlay';
+const renderCamera = () => isOverlay() ? overlayCamera : camera;
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistance = 0.3; controls.maxDistance = 8;
 function frontView() {
@@ -448,7 +460,7 @@ function smoothInto(store, i, v) {
   arr[k] += (v.x - arr[k]) * a; arr[k + 1] += (v.y - arr[k + 1]) * a; arr[k + 2] += (v.z - arr[k + 2]) * a;
   v.set(arr[k], arr[k + 1], arr[k + 2]);
 }
-function resetSmoothing() { for (const s of Object.values(sm)) s.on = false; }
+function resetSmoothing() { for (const s of Object.values(sm)) s.on = false; avatar.imagePoints?.clear(); }
 
 // ---------------------------------------------------------------- puppet update
 function updateBody(res) {
@@ -598,24 +610,27 @@ async function loadAvatar() {
     avatar.scale = 1.75 / box.getSize(new THREE.Vector3()).y;
     avatar.hip = restOf('Hip').p.clone();
     gltf.scene.position.sub(avatar.hip);
-    avatar.root = root; resetAvatar(); root.visible = avatarUI.value === 'character';
+    avatar.root = root; installRegionMask(root); resetAvatar(); root.visible = avatarUI.value !== 'skeleton';
+    document.body.classList.add('character-ready');
     avatarInfo.textContent = 'Body + fingers · face expressions later';
     if (avatar.last) present(avatar.last);
-    if (root.visible) frontView();
+    if (root.visible && !isOverlay()) frontView();
     return avatar;
   })().catch(e => {
     avatar.promise = null; avatarUI.value = 'skeleton'; avatarInfo.textContent = 'Character unavailable · select to retry';
-    note('Character: ' + e.message); if (avatar.last) present(avatar.last); throw e;
+    configureDisplay(); note('Character: ' + e.message); if (avatar.last) present(avatar.last); throw e;
   });
   return avatar.promise;
 }
 function updateAvatar(res) {
   avatar.last = res;
-  const active = avatarUI.value === 'character' && avatar.root;
+  const active = avatarUI.value !== 'skeleton' && avatar.root;
   if (avatar.root) avatar.root.visible = !!active;
   if (!active) return;
   // Hide only the old 3D visualization. Its point calculations and the camera overlay still run.
   for (const g of [body.group,handRig.L.group,handRig.R.group,faceGroup,neck,clavL,clavR,spine,rootJoint,chinJoint,pelvisJoint,head,...spineJoints]) g.visible = false;
+  if (isOverlay()) { updateCameraAvatar(res); return; }
+  setRegions(null);
   const visible = i => res.poseWorld && (res.poseWorld[i].visibility == null || res.poseWorld[i].visibility > .5);
   const bodyReady = ui.body.checked && res.pose && res.poseWorld && [11,12,23,24].every(visible);
   // Solve in an unreflected world, then reflect the completed hierarchy once for Mirror.
@@ -624,21 +639,22 @@ function updateAvatar(res) {
   if (bodyReady) avatar.root.position.copy(body.pts[23]).add(body.pts[24]).multiplyScalar(.5);
   else avatar.root.position.set(0,-.02,0);
   avatar.root.updateMatrixWorld(true);
+  const p = body.pts.map(canonical);
   if (bodyReady) {
-  const p = body.pts.map(canonical), hips = p[23].clone().add(p[24]).multiplyScalar(.5), chest=p[11].clone().add(p[12]).multiplyScalar(.5);
+  const hips = p[23].clone().add(p[24]).multiplyScalar(.5), chest=p[11].clone().add(p[12]).multiplyScalar(.5);
   const restHips=restOf('L_Thigh').p.clone().add(restOf('R_Thigh').p).multiplyScalar(.5);
   const restChest=restOf('L_Upperarm').p.clone().add(restOf('R_Upperarm').p).multiplyScalar(.5);
   const refFrame=orientation(restOf('L_Thigh').p.clone().sub(restOf('R_Thigh').p),restChest.clone().sub(restHips));
   applyFrame(['Hip','Pelvis'],orientation(p[23].clone().sub(p[24]),chest.clone().sub(hips)),refFrame);
   const chestRef=orientation(restOf('L_Upperarm').p.clone().sub(restOf('R_Upperarm').p),restChest.clone().sub(restHips));
   applyFrame(['Waist','Spine01','Spine02','NeckTwist01','NeckTwist02','Head'],orientation(p[11].clone().sub(p[12]),chest.clone().sub(hips)),chestRef);
-  for (const [s,shoulder,elbow,wrist,hip,knee,ankle,toe] of [['L',11,13,15,23,25,27,31],['R',12,14,16,24,26,28,32]]) {
+  }
+  if (ui.body.checked && res.pose && res.poseWorld) for (const [s,shoulder,elbow,wrist,hip,knee,ankle,toe] of [['L',11,13,15,23,25,27,31],['R',12,14,16,24,26,28,32]]) {
     if ([shoulder,elbow].every(visible)) aim(s+'_Upperarm',s+'_Forearm',p[shoulder],p[elbow]);
     if ([elbow,wrist].every(visible)) aim(s+'_Forearm',s+'_Hand',p[elbow],p[wrist]);
     if ([hip,knee].every(visible)) aim(s+'_Thigh',s+'_Calf',p[hip],p[knee]);
     if ([knee,ankle].every(visible)) aim(s+'_Calf',s+'_Foot',p[knee],p[ankle]);
     if ([ankle,toe].every(visible)) aim(s+'_Foot',s+'_ToeBase',p[ankle],p[toe]);
-  }
   }
   if (res.face && ui.face.checked) {
     const f = i => canonical(new THREE.Vector3().fromArray(facePos,i*3));
@@ -656,17 +672,179 @@ function updateAvatar(res) {
     }
   }
   avatar.root.scale.x = state.mirror ? -avatar.scale : avatar.scale;
-  avatar.root.updateMatrixWorld(true); avatar.tracked=!!(bodyReady || (res.face && ui.face.checked) || (res.hands.length && ui.hands.checked));
+  avatar.root.updateMatrixWorld(true); avatar.tracked=!!((ui.body.checked && res.poseWorld && BODY_JOINTS.some(visible)) || (res.face && ui.face.checked) || (res.hands.length && ui.hands.checked));
   avatarInfo.textContent = bodyReady ? 'Tracking body + fingers · face expressions later'
-    : avatar.tracked ? 'Head / hands tracked · show hips for body' : 'Waiting for person · face expressions later';
+    : avatar.tracked ? 'Tracking visible parts · face expressions later' : 'Waiting for person · face expressions later';
+}
+// Image-space fitting uses the same contained video rectangle as the camera.
+// Depth is inferred from landmarks, not a physical depth sensor.
+function regionOf(name) {
+  name=name.replace('CC_Base_','');
+  const side=name.match(/^([LR])_/);
+  if (!side) return /Head|Facial|Eye|Jaw|Teeth|Tongue|Neck/.test(name)?'head':'torso';
+  const s=side[1];
+  if (/Upperarm/.test(name)) return s+'upper';
+  if (/Forearm|Elbow/.test(name)) return s+'fore';
+  if (/Hand|Thumb|Index|Mid|Ring|Pinky/.test(name)) return s+'hand';
+  if (/Thigh/.test(name)) return s+'thigh';
+  if (/Calf|Knee/.test(name)) return s+'calf';
+  if (/Foot|Toe/.test(name)) return s+'foot';
+  if (/Eye/.test(name)) return 'head';
+  return 'torso';
+}
+function installRegionMask(root) {
+  avatar.masks=[];
+  root.traverse(o=>{
+    if (!o.isSkinnedMesh) return;
+    const g=o.geometry, idx=g.attributes.skinIndex, weights=g.attributes.skinWeight;
+    const regions=o.skeleton.bones.map(b=>regionOf(b.name));
+    const attr=new THREE.Float32BufferAttribute(new Float32Array(idx.count).fill(1),1);
+    g.setAttribute('trackedVisibility',attr);
+    avatar.masks.push({attr,idx,weights,regions});
+    for (const m of Array.isArray(o.material)?o.material:[o.material]) {
+      m.onBeforeCompile=shader=>{
+        shader.vertexShader='attribute float trackedVisibility; varying float vTrackedVisibility;\n'+shader.vertexShader;
+        shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvTrackedVisibility=trackedVisibility;');
+        shader.fragmentShader='varying float vTrackedVisibility;\n'+shader.fragmentShader;
+        shader.fragmentShader=shader.fragmentShader.replace('#include <clipping_planes_fragment>','#include <clipping_planes_fragment>\nif (vTrackedVisibility < 0.45) discard;');
+      };
+      m.customProgramCacheKey=()=> 'tracked-regions-v1'; m.needsUpdate=true;
+    }
+  });
+}
+function setRegions(visible) {
+  const key=visible?[...visible].sort().join(','):'all';
+  if (key===avatar.regionKey) return;
+  avatar.regionKey=key; avatar.visibleRegions=visible?new Set(visible):null;
+  for(const {attr,idx,weights,regions} of avatar.masks||[]) {
+    for(let i=0;i<attr.count;i++) {
+      let value=visible?0:1;
+      if(visible) for(let j=0;j<4;j++) if(visible.has(regions[idx.getComponent(i,j)])) value+=weights.getComponent(i,j);
+      attr.setX(i,value);
+    }
+    attr.needsUpdate=true;
+  }
+}
+function pinBone(name,target) {
+  const b=boneOf(name); if(!b || !target) return;
+  b.position.copy(b.parent.worldToLocal(target.clone())); b.updateWorldMatrix(false,true);
+}
+function updateCameraAvatar(res) {
+  avatar.imagePoints ||= new Map();
+  const used=new Set(), regions=new Set();
+  const finite=p=>p && [p.x,p.y,p.z??0].every(Number.isFinite);
+  const good=p=>finite(p) && (p.visibility==null || p.visibility>.5) && (p.presence==null || p.presence>.5);
+  const point=(p,key,z=p.z??0)=>{
+    used.add(key);
+    const v=new THREE.Vector3(p.x-.5,-(p.y-.5)*aspect(),-z), old=avatar.imagePoints.get(key);
+    if(old) v.lerp(old,Number(ui.smooth.value)/100);
+    avatar.imagePoints.set(key,v.clone()); return v;
+  };
+  const p=Array.from({length:33},(_,i)=>ui.body.checked && good(res.pose?.[i])?point(res.pose[i],'p'+i):null);
+  const hands=ui.hands.checked?(res.hands||[]).filter(h=>h.img?.length===21 && h.img.every(finite)):[];
+  const face=ui.face.checked && res.face?.length===NF && res.face.every(finite)?res.face:null;
+  const mid=(a,b)=>a.clone().add(b).multiplyScalar(.5);
+  const refMid=(a,b)=>mid(restOf(a).p,restOf(b).p);
+  const chest=p[11]&&p[12]?mid(p[11],p[12]):null, hips=p[23]&&p[24]?mid(p[23],p[24]):null;
+  const restChest=refMid('L_Upperarm','R_Upperarm'), restHips=refMid('L_Thigh','R_Thigh');
+  let scale=avatar.cameraScale || avatar.scale;
+  // Prefer broad, reliable body measurements; use a hand only when it is all we see.
+  const measures=[];
+  if(chest) measures.push([p[11],p[12],'L_Upperarm','R_Upperarm']);
+  if(chest && hips) measures.push([chest,hips,null,null,restChest.distanceTo(restHips)]);
+  if(!measures.length) for(const [a,b,n,e] of [[11,13,'L_Upperarm','L_Forearm'],[12,14,'R_Upperarm','R_Forearm'],[13,15,'L_Forearm','L_Hand'],[14,16,'R_Forearm','R_Hand'],[23,25,'L_Thigh','L_Calf'],[24,26,'R_Thigh','R_Calf']]) {
+    if(p[a]&&p[b]) measures.push([p[a],p[b],n,e]);
+  }
+  if(measures.length) {
+    const values=measures.map(([a,b,n,e,d])=>a.distanceTo(b)/(d||restOf(n).p.distanceTo(restOf(e).p))).filter(v=>v>1e-5 && Number.isFinite(v));
+    if(values.length) scale=values.reduce((a,b)=>a+b,0)/values.length;
+  } else if(face && boneOf('L_Eye') && boneOf('R_Eye')) {
+    scale=dImg(face[468],face[473])/restOf('L_Eye').p.distanceTo(restOf('R_Eye').p);
+  } else if(hands.length) {
+    const h=hands[0]; scale=dImg(h.img[0],h.img[9])/restOf(h.side+'_Hand').p.distanceTo(restOf(h.side+'_Mid1').p);
+  }
+  scale=clamp(scale,avatar.scale*.05,avatar.scale*8); avatar.cameraScale=scale;
+  avatar.root.scale.setScalar(scale); avatar.root.position.set(0,0,0);
+  for(const [name,b] of avatar.bones) {const r=avatar.rest.get(name);b.quaternion.copy(r.localQ);b.position.copy(r.localP);b.scale.copy(r.localS);}
+  avatar.root.updateMatrixWorld(true);
+  if(hips) avatar.root.position.copy(hips).sub(restHips.clone().sub(avatar.hip).multiplyScalar(scale));
+  else if(chest) avatar.root.position.copy(chest).sub(restChest.clone().sub(avatar.hip).multiplyScalar(scale));
+  avatar.root.updateMatrixWorld(true);
+  if(chest) {
+    regions.add('torso');
+    const up=hips?chest.clone().sub(hips):new THREE.Vector3(0,1,0);
+    const ref=orientation(restOf('L_Upperarm').p.clone().sub(restOf('R_Upperarm').p),restChest.clone().sub(restHips));
+    const target=orientation(p[11].clone().sub(p[12]),up);
+    applyFrame(['Hip','Pelvis','Waist','Spine01','Spine02','NeckTwist01','NeckTwist02','Head'],target,ref);
+    // Recenter after rotating the spine; shoulders may be visible without the pelvis.
+    const actual=mid(boneOf('L_Upperarm').getWorldPosition(new THREE.Vector3()),boneOf('R_Upperarm').getWorldPosition(new THREE.Vector3()));
+    avatar.root.position.add(chest.clone().sub(actual)); avatar.root.updateMatrixWorld(true);
+  }
+  for(const [s,sh,el,wr,hi,kn,an,to] of [['L',11,13,15,23,25,27,31],['R',12,14,16,24,26,28,32]]) {
+    for(const [name,end,a,b,region] of [['Upperarm','Forearm',sh,el,'upper'],['Forearm','Hand',el,wr,'fore'],['Thigh','Calf',hi,kn,'thigh'],['Calf','Foot',kn,an,'calf'],['Foot','ToeBase',an,to,'foot']]) {
+      if(!p[a] || !p[b]) continue;
+      regions.add(s+region); aim(s+'_'+name,s+'_'+end,p[a],p[b]);
+      pinBone(s+'_'+name,p[a]); pinBone(s+'_'+end,p[b]);
+    }
+  }
+  if(face) {
+    regions.add('head');
+    const f=i=>point(face[i],'f'+i);
+    applyFrame(['Head'],orientation(f(454).sub(f(234)),f(10).sub(f(152))),new THREE.Quaternion());
+    const left=boneOf('L_Eye'),right=boneOf('R_Eye');
+    if(left&&right) {
+      const eyes=mid(f(468),f(473)), actual=mid(left.getWorldPosition(new THREE.Vector3()),right.getWorldPosition(new THREE.Vector3()));
+      pinBone('Head',boneOf('Head').getWorldPosition(new THREE.Vector3()).add(eyes.sub(actual)));
+    } else pinBone('Head',f(152));
+  }
+  for(const h of hands) {
+    const s=h.side, wrist=p[s==='L'?15:16], z0=wrist?-wrist.z:0;
+    const hp=h.img.map((v,i)=>point(v,s+i,z0+(v.z||0)-(h.img[0].z||0)));
+    regions.add(s+'hand');
+    const ref=orientation(restOf(s+'_Index1').p.clone().sub(restOf(s+'_Pinky1').p),restOf(s+'_Mid1').p.clone().sub(restOf(s+'_Hand').p));
+    applyFrame([s+'_Hand'],orientation(hp[5].clone().sub(hp[17]),hp[9].clone().sub(hp[0])),ref);
+    pinBone(s+'_Hand',hp[0]);
+    for(const [finger,start] of [['Thumb',1],['Index',5],['Mid',9],['Ring',13],['Pinky',17]]) for(let j=1;j<=3;j++) {
+      const n=s+'_'+finger+j;
+      aim(n,j<3?s+'_'+finger+(j+1):null,hp[start+j-1],hp[start+j]); pinBone(n,hp[start+j-1]);
+    }
+  }
+  for(const key of avatar.imagePoints.keys()) if(!used.has(key)) avatar.imagePoints.delete(key);
+  avatar.regionSeen ||= new Map(); avatar.frameNo = (avatar.frameNo || 0) + 1;
+  for (const r of regions) avatar.regionSeen.set(r, avatar.frameNo);
+  const stable = new Set([...avatar.regionSeen].filter(([, f]) => avatar.frameNo - f < 12).map(([r]) => r));
+  setRegions(stable);
+  avatar.root.scale.x=state.mirror?-scale:scale;
+  if(state.mirror) avatar.root.position.x*=-1;
+  avatar.root.updateMatrixWorld(true); avatar.tracked=regions.size>0; avatar.root.visible=avatar.tracked;
+  avatarInfo.textContent=avatar.tracked?'Tracking visible parts · depth estimated':'Show a hand, face or body to track';
+}
+
+function configureDisplay() {
+  const on=isOverlay(), picture=document.querySelector('.picture');
+  document.body.classList.toggle('oncamera',on);
+  renderer.domElement.classList.toggle('character-canvas',on);
+  (on?picture:view).appendChild(renderer.domElement);
+  (on?picture:view).appendChild(avatarInfo);
+  scene.background=on?null:new THREE.Color(0x0f1317); grid.visible=!on; controls.enabled=!on;
+  renderer.setClearColor(0x0f1317,on?0:1);
+  if (!on) renderer.domElement.style.cssText='';
+  ui.btnView.textContent=on?'3D view':document.body.classList.contains('puppet')?'On camera':'Puppet';
+  resize();
 }
 avatarUI.onchange = async () => {
-  if (avatarUI.value === 'character') { try { await loadAvatar(); } catch { return; } }
-  if (avatar.root) avatar.root.visible = avatarUI.value === 'character';
-  frontView();
+  configureDisplay();
+  if (avatarUI.value !== 'skeleton') { try { await loadAvatar(); } catch { return; } }
+  if (avatar.root) avatar.root.visible = avatarUI.value !== 'skeleton';
   if (avatar.last) present(avatar.last);
+  if (!isOverlay()) frontView();
 };
-$('avatarRest').onclick = () => { stopCamera(); resetAvatar(); avatarInfo.textContent='Rest pose · start camera to track'; };
+$('optGuides').onchange=()=>document.body.classList.toggle('guides',$('optGuides').checked);
+$('avatarRest').onclick = async () => {
+  stopCamera(); avatarUI.value='character'; document.body.classList.add('puppet');
+  await avatarUI.onchange(); setRegions(null); resetAvatar(); frontView();
+  avatarInfo.textContent='Rest pose · start camera to track';
+};
 
 // ---------------------------------------------------------------- 2D overlay
 function strokePairs(pts, pairs, W, H, ok) {
@@ -751,7 +929,9 @@ function updateBlend(cats, hasFace) {
 
 // ---------------------------------------------------------------- one frame
 function present(res) {
-  draw2D(res);
+  const overlayHidden = isOverlay() && avatar.root && !$('optGuides').checked && document.body.classList.contains('character-ready');
+  if (overlayHidden) { if (!overlay.dataset.blank) { octx.clearRect(0, 0, overlay.width, overlay.height); overlay.dataset.blank = '1'; } }
+  else { overlay.dataset.blank = ''; draw2D(res); }
   const hasBody = updateBody(res);
   const hasFace = updateFace(res);
   const seen = { L: false, R: false };
@@ -872,7 +1052,7 @@ function syncSize() {
   state.W = video.videoWidth; state.H = video.videoHeight;
   overlay.width = state.W; overlay.height = state.H;
   document.documentElement.style.setProperty('--ar', state.W + ' / ' + state.H);   // the phone layout sizes the picture box by it
-  resetSmoothing(); setStatus();
+  resetSmoothing(); resize(); setStatus();
 }
 video.addEventListener('loadedmetadata', syncSize);
 video.addEventListener('resize', syncSize);
@@ -889,35 +1069,49 @@ $('btnTools').onclick = () => document.querySelector('header').classList.toggle(
 $('exprTitle').onclick = () => $('expr').classList.toggle('open');
 // On a phone there is one view at a time: the camera picture or the puppet
 ui.btnView.onclick = () => {
+  if (isOverlay()) { avatarUI.value='character'; document.body.classList.add('puppet'); avatarUI.onchange(); return; }
+  if (document.body.classList.contains('puppet') && avatarUI.value==='character') { avatarUI.value='overlay'; document.body.classList.remove('puppet'); avatarUI.onchange(); return; }
   const puppet = document.body.classList.toggle('puppet');
   ui.btnView.textContent = puppet ? 'Camera' : 'Puppet';
   resize();
   if (puppet && avatarUI.value === 'character' && avatar.root) frontView();
 };
 ui.btnSnap.onclick = () => {
-  const W = state.W, H = state.H, c = document.createElement('canvas'); c.width = W * 2; c.height = H;
+  const W = state.W, H = state.H, c = document.createElement('canvas'); c.width = W * (isOverlay()?1:2); c.height = H;
   const g = c.getContext('2d'); g.fillStyle = '#0f1317'; g.fillRect(0, 0, c.width, c.height);
   g.save(); if (state.mirror) { g.translate(W, 0); g.scale(-1, 1); }
   if (ui.video.checked && video.readyState >= 2) g.drawImage(video, 0, 0, W, H);
-  g.drawImage(overlay, 0, 0, W, H); g.restore();
-  renderer.render(scene, camera);
+  if (!isOverlay() || $('optGuides').checked || !avatar.root) g.drawImage(overlay, 0, 0, W, H); g.restore();
+  renderer.render(scene, renderCamera());
   const t = renderer.domElement, f = Math.min(W / t.width, H / t.height), tw = t.width * f, th = t.height * f;
-  g.drawImage(t, W + (W - tw) / 2, (H - th) / 2, tw, th);
+  if (isOverlay()) g.drawImage(t,0,0,W,H);
+  else g.drawImage(t, W + (W - tw) / 2, (H - th) / 2, tw, th);
   const a = document.createElement('a');
   a.download = 'mirror-puppet-' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.png';
   a.href = c.toDataURL('image/png'); a.click();
 };
 function resize() {
+  if (isOverlay()) {
+    const picture=document.querySelector('.picture'), W=picture.clientWidth,H=picture.clientHeight;
+    if (!W || !H) return;
+    const f=Math.min(W/state.W,H/state.H), w=state.W*f,h=state.H*f;
+    renderer.setSize(w,h,false);
+    Object.assign(renderer.domElement.style,{left:(W-w)/2+'px',top:(H-h)/2+'px',width:w+'px',height:h+'px'});
+    overlayCamera.top=aspect()/2;overlayCamera.bottom=-aspect()/2;overlayCamera.updateProjectionMatrix();
+    return;
+  }
   const w = view.clientWidth, h = view.clientHeight; if (!w || !h) return;
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
 }
-new ResizeObserver(resize).observe(view); resize();
+new ResizeObserver(resize).observe(view);
+new ResizeObserver(resize).observe(document.querySelector('.picture')); resize();
 
 // ---------------------------------------------------------------- loop
 let fps = 0, frames = 0, fpsAt = performance.now(), lastVT = -1, lastTs = 0;
+const perf = { detect: 0, draw: 0 };   // ms per frame: recognition, then drawing (smoothed)
 function setStatus(msg) {
   const engine = backend ? backend.label : (wanted ? 'loading model' : 'no engine · pick one in the menu');
-  const parts = [engine, state.running ? fps + ' fps' : 'camera off', state.W + '×' + state.H];
+  const parts = [engine, state.running ? fps + ' fps · ' + Math.round(perf.detect) + ' + ' + Math.round(perf.draw) + ' ms' : 'camera off', state.W + '×' + state.H];
   if (state.note && performance.now() - state.noteAt < 15000) parts.push(state.note);
   ui.status.textContent = msg || parts.join(' · ');
 }
@@ -927,18 +1121,23 @@ function loop() {
     lastVT = video.currentTime; syncSize();
     let ts = Math.round(performance.now()); if (ts <= lastTs) ts = lastTs + 1; lastTs = ts;
     let res = null;
+    const t0 = performance.now();
     try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
+    const t1 = performance.now();
     if (res) { present(res); frames++; }
+    const t2 = performance.now();
+    perf.detect += (t1 - t0 - perf.detect) * 0.1; perf.draw += (t2 - t1 - perf.draw) * 0.1;
   }
   const now = performance.now();
   if (now - fpsAt >= 1000) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; setStatus(); }
-  controls.update();
-  if (view.clientWidth && view.clientHeight) renderer.render(scene, camera);
+  if (controls.enabled) controls.update();
+  if (isOverlay() || (view.clientWidth && view.clientHeight)) renderer.render(scene, renderCamera());
 }
 
 // a small handle for testing from the console
-window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
+window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
 
+configureDisplay();
 loop();
 useEngine(ui.engine.value);
 startCamera();

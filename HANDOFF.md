@@ -150,3 +150,20 @@ The repo is the owner's (`nikolovarch01-cmd`); GitHub CLI 2.100 is installed and
 
 `tools/README.md` — headless Chrome with a fake camera, a harness page that injects a synthetic figure and
 posts PNGs of both canvases to a tiny Python server, a phone-size run (390×844, mobile user agent).
+
+## On-camera mode finished, defaults restored — 2026-09-11 evening (Claude)
+
+Codex's unfinished "On camera" display (the character drawn over the camera picture, unrecognised
+regions hidden by a per-vertex mask) was completed and is live. Changes on top of Codex's work:
+- **Skeleton is the default display again**; the 17.8 MB character loads only when Character 3D or
+  On camera is chosen (a phone start-up stays at ~33 MB). Codex's spine-guides check passes again.
+- On camera: a body region stays visible for 12 frames after it was last recognised (no flicker; the
+  mask over ~80k vertices is recomputed only when the stable set changes — it cost 5× per frame when
+  hands flickered).
+- The 2D overlay is not drawn while it is hidden behind the character (Guides on camera unchecked).
+- Status line shows `fps · detect + draw ms` (smoothed) so a phone can report where a lag comes from.
+- `tools/check.py` (one command, warm profile, ~6 s) and `tools/overlay-harness.html` (On-camera checks).
+Measured (desktop, synthetic figure, JS only): present() 0.3 ms skeleton, 0.45 ms character,
+0.6 ms on-camera. A lag on a phone is therefore recognition (three models) plus GPU drawing of the
+60k-triangle mesh with 4K textures — a 2K texture variant for phones is the next lever, not the JS.
+Open from the owner: "front camera lags, back camera great" (live, iPhone) — not yet resolved.

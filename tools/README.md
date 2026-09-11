@@ -3,6 +3,32 @@
 All commands from the repo root. Python 3 (`py`) and Google Chrome are needed. Nothing here touches the
 user's screen.
 
+## 0. One command
+
+```
+py tools\check.py
+```
+
+Does sections 1 and 5 by itself in about 10–30 s. It starts `tools\testsrv.py` on a free port (8765 if
+free), runs headless Chrome with the flags from section 1 against `harness.html`, reads Chrome's
+stderr live and stops Chrome (by PID) as soon as the harness prints `DONE` or `ERROR` (or after
+`--timeout`, default 150 s), then stops the server. It prints the `HARNESS` lines with the console
+prefix stripped (`[…:INFO:CONSOLE:4] "…", source: …` — current Chrome writes `CONSOLE:4]`, older builds
+`CONSOLE(4)]`; both are handled), the `files from the local store` line, any line containing
+`Uncaught`, `TypeError`, `ReferenceError`, `SyntaxError`, `engine failed` or `detect failed`, the
+elapsed seconds and the PNGs written to the repo root (git-ignored). Exit code 0 only if `DONE` was
+reached and no error line appeared.
+
+The Chrome profile is `%TEMP%\mirror-puppet-check-profile` and is kept between runs: the first run
+downloads the models (~33 MB), the next ones print `files from the local store: N | downloaded MB: 0.0`.
+The server sends `Cache-Control: no-store`, so the page itself is never stale — no need to delete
+the profile after editing the page.
+
+Flags: `--avatar` runs `avatar-harness.html` (section 5, expects `AVATAR_DONE`); `--phone` uses a
+390x844 window and the iPhone user agent (adds `?phone` for `--avatar`); `--fresh` deletes the profile
+first; `--keep` leaves Chrome and the server running and prints their PIDs; `--timeout N`; `--port N`
+(preferred server port); `--log FILE` saves Chrome's full stderr for a closer look.
+
 ## 1. Desktop harness — load, detect on a fake camera, render a synthetic figure
 
 ```
