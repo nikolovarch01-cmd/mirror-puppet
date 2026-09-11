@@ -75,6 +75,15 @@ function synth(st) {
     mp.renderer.render(mp.scene, mp.renderCamera()); await post('phone-' + mode + '.png', mp.renderer.domElement.toDataURL('image/png'));
     if (mode === 'skeleton') await post('phone-overlay2d.png', mp.canvases().overlay.toDataURL('image/png'));
   }
+  // the phone alone, straight on: expect the back with the cameras, long edge horizontal
+  { const T = mp.THREE, g = mp.phone.meshes.L; let skinned = null; mp.scene.traverse(o => { if (o.isSkinnedMesh) skinned = o; });
+    const sel = doc.getElementById('avatarMode'); sel.value = 'skeleton'; await sel.onchange();
+    mp.scene.traverse(o => { if (o !== mp.scene && o !== g && !g.getObjectById(o.id) && (o.isMesh || o.isLineSegments || o.isPoints || o.isGroup)) o.userData._v = o.visible; });
+    mp.scene.children.forEach(o => { if (o !== g) o.visible = false; });
+    g.visible = true; g.position.set(0, 0, 0); g.quaternion.identity(); g.scale.setScalar(0.5);
+    mp.camera.position.set(0, 0, 1.6); mp.camera.lookAt(0, 0, 0); mp.camera.updateMatrixWorld(); mp.renderer.render(mp.scene, mp.camera);
+    const d = mp.renderer.domElement.toDataURL('image/png'); await post('phone-alone.png', d);
+    log('PHONE alone rendered; model loaded', !!mp.phone.model); }
   log('DONE');
 })().catch(e => log('ERROR', String(e), e && e.stack));
 </script>

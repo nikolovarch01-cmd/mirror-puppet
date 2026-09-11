@@ -592,9 +592,9 @@ function buildEyes() {
   const ipd = restOf('L_Eye').p.distanceTo(restOf('R_Eye').p), r = ipd * 0.24;   // eyeball radius, a little bigger than real, so ours show
   // the face plane: across = right eye -> left eye, up = jaw (or head) -> between the eyes; forward = its normal
   const eyeMid = restOf('L_Eye').p.clone().add(restOf('R_Eye').p).multiplyScalar(0.5);
-  const low = restOf('JawRoot') || restOf('Head');
+  // the rest pose stands upright, so the head's up is the world's up; across = right eye -> left eye
   const across = restOf('L_Eye').p.clone().sub(restOf('R_Eye').p).normalize();
-  let up = eyeMid.clone().sub(low.p); up.addScaledVector(across, -up.dot(across)).normalize();
+  let up = new THREE.Vector3(0, 1, 0); up.addScaledVector(across, -up.dot(across)).normalize();
   const forward = new THREE.Vector3().crossVectors(across, up).normalize();   // out of the face for a right-handed (across, up, forward)
   const right = new THREE.Vector3().crossVectors(up, forward).normalize();
   const world = new THREE.Quaternion().setFromRotationMatrix(_em.makeBasis(right, up, forward));

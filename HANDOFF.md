@@ -233,3 +233,6 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   when the engine gives them (3 models), else from the iris/corner/lid ratios.
 - Harnesses: eyes-harness sets `res.blend = null` (synthetic face has no gaze values); phone-harness uses a
   hand-sized box and compares against the mirrored palm.
+- Eyes, final: the straight-ahead frame uses the world's up (the rest pose is upright) — head→eyes and
+  jaw→eyes both pointed down and sank the pupils. Verified: centred pupils in the close-up render.
+- The phone-alone render in the harness hides the lights too (black phone) — orientation check only.
