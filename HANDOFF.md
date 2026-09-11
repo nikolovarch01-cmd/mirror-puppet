@@ -197,3 +197,22 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   slab in all three modes); `window.mirrorPuppet.phone` for tests.
 - Not verified with a real phone in a real hand; the detector's hit rate on a phone seen in a mirror
   (back side, dark) is unknown — if it misses, `Phone: left hand` / `right hand` forces it.
+
+## Moving pupils, his iPhone model, phone placed by the detector — 2026-09-11, night
+
+- **Eyes.** The character's `CC_Base_L_Eye`/`R_Eye` bones carry no skin, so two eyeballs of ours (sphere,
+  iris disc, pupil) hang on them, pushed 0.12 pupil-distances forward into the socket opening; the
+  model's own eye vertices within 0.36 pupil-distances of a bone are masked out for good (through the
+  region-mask attribute, skinned positions via `applyBoneTransform`). Gaze per eye from the iris centre
+  against the corners and lids (468 / 133,33 / 159,145 and 473 / 362,263 / 386,374), yaw ±0.6 rad, pitch
+  ±0.4 rad, smoothed. The bone chain is scaled (Armature 0.01): the eye group undoes that scale, and
+  its "straight ahead" frame is built from head→eyes and neck→head directions at rest.
+  `tools/eyes-harness.html` (gaze right / up, head close-ups). Not seen live yet.
+- **Phone.** `assets/phone.glb` = "aiPhone 15 Pro - Low Poly smartphone" by hysokana (Sketchfab,
+  **CC BY-NC 4.0** — credit shown in Settings; non-commercial only). Loaded lazily via the store, turned
+  back-to-viewer, scaled ×10 into hand-length units, swapped in for the slab. On camera the phone sits
+  at the detector's box (centre, size, upright or lying, camera island up), slightly in front of the
+  hand; elsewhere across the palm at 0.35 hand lengths. A box goes only to the nearest palm that is
+  inside the grown box or within 0.8 hand length (his open other hand got a phone before).
+- Trap for tests: OrbitControls moves `camera` back on every animation frame — set the camera and
+  render in the same synchronous step, never across an `await`.

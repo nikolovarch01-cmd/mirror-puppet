@@ -1,0 +1,80 @@
+<!doctype html><title>harness</title>
+<iframe id="f" src="/mirror-puppet.html" width="1300" height="720" allow="camera *; microphone *" style="border:0"></iframe>
+<script>
+const log = (...a) => console.log('HARNESS', ...a);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function post(name, dataUrl) { const r = await fetch('/save/' + name, { method: 'POST', body: dataUrl }); log('saved', name, r.status); }
+function synth(st) {
+  const A = st.H / st.W;
+  const P = (x, y, z = 0, visibility = 1) => ({ x, y, z, visibility });
+  const pose = Array.from({ length: 33 }, () => P(0.5, 0.5, 0, 0));
+  const set = (i, x, y, z = 0) => { pose[i] = P(x, y, z, 1); };
+  set(0, 0.5, 0.28); set(2, 0.48, 0.26); set(5, 0.52, 0.26); set(7, 0.455, 0.28); set(8, 0.545, 0.28);
+  set(11, 0.62, 0.45); set(12, 0.38, 0.45); set(13, 0.70, 0.62); set(14, 0.30, 0.62); set(15, 0.72, 0.40, -0.2); set(16, 0.28, 0.40, -0.2);
+  set(23, 0.58, 0.80); set(24, 0.42, 0.80); set(25, 0.60, 1.05); set(26, 0.40, 1.05); set(27, 0.60, 1.30); set(28, 0.40, 1.30);
+  set(29, 0.60, 1.32, .025); set(30, 0.40, 1.32, .025); set(31, .62, 1.33, -.10); set(32, .38, 1.33, -.10);
+  const K = 1.5, hx = 0.5, hy = 0.80;
+  const poseWorld = pose.map(p => ({ x: (p.x - hx) * K, y: (p.y - hy) * A * K, z: p.z * K, visibility: p.visibility }));
+  function hand(wx, wy, dir) {
+    const img = [P(wx, wy, 0)];
+    const fingers = [[-1.0, 3], [-0.5, 4], [-0.15, 4], [0.2, 4], [0.55, 3]];
+    for (const [ang, n] of fingers) for (let j = 1; j <= 4; j++) {
+      const L = j <= n ? j * 0.028 : n * 0.028;
+      img.push(P(wx + Math.cos(dir + ang) * L, wy + Math.sin(dir + ang) * L / A, -0.01 * j));
+    }
+    const world = img.map(p => ({ x: (p.x - wx) * K, y: (p.y - wy) * A * K, z: p.z * K, visibility: 1 }));
+    return { img, world };
+  }
+  const hL = hand(0.72, 0.40, -Math.PI / 2 - 0.3), hR = hand(0.28, 0.40, -Math.PI / 2 + 0.3);
+  const cx = 0.5, cy = 0.28, face = [];
+  for (let i = 0; i < 478; i++) {
+    const t = i * 2.399963, r = Math.sqrt((i + 0.5) / 478);
+    face.push(P(cx + r * Math.cos(t) * 0.04, cy + r * Math.sin(t) * 0.05 / A, -0.035 * (1 - r * r)));
+  }
+  face[1] = P(cx, cy, -0.045); face[4] = P(cx, cy + 0.005, -0.043);
+  face[468] = P(cx - 0.02, cy - 0.015 / A, -0.02); face[473] = P(cx + 0.02, cy - 0.015 / A, -0.02);
+  face[152] = P(cx, cy + 0.05 / A, -0.01); face[10] = P(cx, cy - 0.05 / A, -0.01);
+  const blend = [['jawOpen', 0.72], ['mouthSmileLeft', 0.55], ['mouthSmileRight', 0.5], ['browInnerUp', 0.3], ['eyeBlinkRight', 0.12], ['cheekPuff', 0.05], ['_neutral', 0]].map(([categoryName, score]) => ({ categoryName, score, index: 0, displayName: '' }));
+  return { face, blend, pose, poseWorld, hands: [{ side: 'L', attached: true, img: hL.img, world: hL.world }, { side: 'R', attached: true, img: hR.img, world: hR.world }] };
+}
+(async () => {
+  const w = document.getElementById('f').contentWindow;
+  for (let i = 0; i < 240 && !(w.mirrorPuppet && w.mirrorPuppet.backend); i++) await sleep(250);
+  const mp = w.mirrorPuppet, doc = w.document; await sleep(1500); mp.stopCamera();
+  const res = synth(mp.state); const P=(x,y,z=0)=>({x,y,z}); res.face[234]=P(.46,.28,-.01); res.face[454]=P(.54,.28,-.01);
+  const A = mp.state.H / mp.state.W, cx = 0.5, cy = 0.28;
+  // eye corners and lids around the synthetic irises (468 right eye at cx-0.02, 473 left eye at cx+0.02)
+  res.face[33]=P(cx-0.035,cy-0.015/A); res.face[133]=P(cx-0.005,cy-0.015/A); res.face[159]=P(cx-0.02,cy-0.023/A); res.face[145]=P(cx-0.02,cy-0.007/A);
+  res.face[362]=P(cx+0.005,cy-0.015/A); res.face[263]=P(cx+0.035,cy-0.015/A); res.face[386]=P(cx+0.02,cy-0.023/A); res.face[374]=P(cx+0.02,cy-0.007/A);
+  const sel = doc.getElementById('avatarMode'); sel.value = 'character'; await sel.onchange();
+  for (let i = 0; i < 400 && !mp.avatar.root; i++) await sleep(100);
+  for (let i = 0; i < 20; i++) mp.present(res);
+  const eyeL = mp.avatar.bones.get('CC_Base_L_Eye'), eyeR = mp.avatar.bones.get('CC_Base_R_Eye');
+  const gL = eyeL && eyeL.children.find(c => c.isGroup), gR = eyeR && eyeR.children.find(c => c.isGroup);
+  { const V = gL.position.constructor; const wl = gL.getWorldPosition(new V()), wr = gR.getWorldPosition(new V()), hd = mp.avatar.bones.get('CC_Base_Head').getWorldPosition(new V()), ws = gL.getWorldScale(new V());
+    const sph = gL.children.find(c => c.isMesh); const box = new (mp.scene.constructor === Object ? Object : w.Object3DBox3 || Object)();
+    log('EYES geom: L eye', wl.toArray().map(v=>v.toFixed(3)).join(','), '| R eye', wr.toArray().map(v=>v.toFixed(3)).join(','), '| head', hd.toArray().map(v=>v.toFixed(3)).join(','), '| world scale', ws.x.toFixed(3), '| sphere r', sph.geometry.parameters.radius.toFixed(4), '| ipd', wl.distanceTo(wr).toFixed(4)); }
+  log('EYES built', !!gL && !!gR, '| visible', gL && gL.visible, '| straight q', gL && gL.quaternion.toArray().map(v => v.toFixed(3)).join(','));
+  // irises to the person right (towards 33 for the right eye, towards 362 for the left): both eyes must turn the same way
+  res.face[468]=P(cx-0.03,cy-0.015/A); res.face[473]=P(cx+0.01,cy-0.015/A);
+  for (let i = 0; i < 20; i++) mp.present(res);
+  log('EYES turned to the person right: yaw L', mp.eyes.yaw.L.toFixed(2), 'R', mp.eyes.yaw.R.toFixed(2), '| pitch L', mp.eyes.pitch.L.toFixed(2), '(expect both yaw > 0.3, pitch ~ 0)');
+  res.face[468]=P(cx-0.02,cy-0.021/A); res.face[473]=P(cx+0.02,cy-0.021/A);
+  for (let i = 0; i < 20; i++) mp.present(res);
+  log('EYES looking up: pitch L', mp.eyes.pitch.L.toFixed(2), 'R', mp.eyes.pitch.R.toFixed(2), '| yaw L', mp.eyes.yaw.L.toFixed(2), '(expect pitch > 0.2, yaw ~ 0)');
+  const head = mp.avatar.bones.get('CC_Base_Head').getWorldPosition(new (gL.position.constructor)());
+  mp.camera.position.set(head.x, head.y + 0.05, head.z + 0.42); mp.camera.lookAt(head.x, head.y + 0.05, head.z); mp.renderer.render(mp.scene, mp.camera);
+  const d1 = mp.renderer.domElement.toDataURL('image/png'); await post('eyes.png', d1);
+  const eyeCount = (mp.avatar.masks || []).reduce((a, m) => a + (m.eye ? m.eye.reduce((x, y) => x + y, 0) : 0), 0);
+  const attrZero = (mp.avatar.masks || []).reduce((a, m) => { let z = 0; for (let i = 0; i < m.attr.count; i++) if (m.attr.getX(i) < 0.45) z++; return a + z; }, 0);
+  mp.camera.position.set(head.x, head.y + 0.05, head.z + 0.25); mp.camera.lookAt(head.x, head.y + 0.05, head.z); mp.renderer.render(mp.scene, mp.camera);
+  const d2 = mp.renderer.domElement.toDataURL('image/png'); await post('eyes-near.png', d2);
+  { const T = mp.THREE; let skinned = null; mp.scene.traverse(o => { if (o.isSkinnedMesh) skinned = o; });
+    mp.scene.updateMatrixWorld(true); const cL = eyeL.getWorldPosition(new T.Vector3()), cR = eyeR.getWorldPosition(new T.Vector3()), ipd = cL.distanceTo(cR);
+    const pos = skinned.geometry.attributes.position, v = new T.Vector3(), bins = [0.15,0.2,0.25,0.3,0.35,0.4,0.5,0.6,0.8], counts = bins.map(() => 0); let minD = 1e9;
+    for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i); skinned.applyBoneTransform(i, v); v.applyMatrix4(skinned.matrixWorld); const d = Math.min(cL.distanceTo(v), cR.distanceTo(v)) / ipd; minD = Math.min(minD, d); bins.forEach((bn, k) => { if (d < bn) counts[k]++; }); }
+    log('EYES vertex distances (in IPD units) cumulative:', bins.map((bn, k) => bn + ':' + counts[k]).join(' '), '| nearest', minD.toFixed(3), '| ipd', ipd.toFixed(4)); }
+  log('EYES diag: hidden eye vertices', eyeCount, '| mask zeros', attrZero, '| png lengths', d1.length, d2.length, '| eye group world radius', gL.getWorldScale(new (gL.position.constructor)()).x.toFixed(4), '* r', gL.children[0].geometry.parameters.radius.toFixed(3), '| root visible', mp.avatar.root.visible, '| eyeL parent visible chain', (() => { let o = gL, s = []; while (o) { s.push(o.visible ? 1 : 0); o = o.parent; } return s.join(''); })());
+  log('DONE');
+})().catch(e => log('ERROR', String(e), e && e.stack));
+</script>
