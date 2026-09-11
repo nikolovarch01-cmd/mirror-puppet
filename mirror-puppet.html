@@ -29,7 +29,7 @@ body.novideo .picture video{visibility:hidden}
 .chips{position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap}
 .chip{padding:2px 8px;border-radius:999px;font-size:12px;background:rgba(15,19,23,.7);color:var(--muted);border:1px solid var(--line)}
 .chip.on{color:#04121c;border-color:transparent}
-.chip.on.face{background:var(--face)}.chip.on.body{background:var(--body)}.chip.on.left{background:var(--left)}.chip.on.right{background:var(--right)}
+.chip.on.phone{background:#e4e6ea}.chip.on.face{background:var(--face)}.chip.on.body{background:var(--body)}.chip.on.left{background:var(--left)}.chip.on.right{background:var(--right)}
 #expr{position:absolute;left:10px;bottom:10px;width:240px;background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
 #expr h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #expr:not(.open) .bs{display:none}
@@ -98,6 +98,7 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
   </select></label>
   <label>Display <select id="avatarMode"><option value="overlay" selected>On camera</option><option value="character">Character 3D</option><option value="skeleton">Skeleton</option></select></label>
   <label><input type="checkbox" id="optGuides"> Guides on camera</label>
+  <label>Phone <select id="optPhone" title="A phone in the hand: found automatically, or forced"><option value="auto" selected>auto</option><option value="L">left hand</option><option value="R">right hand</option><option value="off">off</option></select></label>
   <button id="avatarRest" title="Stop camera and inspect the character rest pose">Rest pose</button>
   <button id="btnSnap" title="Saves a picture of both views">Snapshot</button>
   </div>
@@ -108,7 +109,7 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
     <div class="picture">
       <video id="video" autoplay muted playsinline webkit-playsinline></video>
       <canvas id="overlay" width="640" height="480"></canvas>
-      <div class="chips"><span class="chip face" id="chipFace">face</span><span class="chip body" id="chipBody">body</span><span class="chip left" id="chipL">left hand</span><span class="chip right" id="chipR">right hand</span></div>
+      <div class="chips"><span class="chip face" id="chipFace">face</span><span class="chip body" id="chipBody">body</span><span class="chip left" id="chipL">left hand</span><span class="chip right" id="chipR">right hand</span><span class="chip phone" id="chipPhone">phone</span></div>
     </div>
     <div id="expr"><h2 id="exprTitle">Expression</h2><div id="bsList"></div></div>
   </section>
@@ -129,7 +130,7 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { FilesetResolver, FaceLandmarker, HandLandmarker, PoseLandmarker, HolisticLandmarker }
+import { FilesetResolver, FaceLandmarker, HandLandmarker, PoseLandmarker, HolisticLandmarker, ObjectDetector }
   from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
 
 // ---------------------------------------------------------------- constants
@@ -142,6 +143,7 @@ const MODEL = {
   pose: G + (IS_MOBILE ? 'pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
                        : 'pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'),
   holistic: G + 'holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task',
+  phone: G + 'object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite',   // finds a 'cell phone' in the picture
 };
 const NF = 478;                                   // face mesh points (incl. irises)
 const UA = (() => {                               // short 'Android · Chrome 153' for the cards, so a phone can be reported
@@ -190,7 +192,7 @@ const video = $('video'), overlay = $('overlay'), octx = overlay.getContext('2d'
 const ui = { face: $('optFace'), hands: $('optHands'), body: $('optBody'), mesh: $('optMesh'), mirror: $('optMirror'),
   video: $('optVideo'), smooth: $('optSmooth'), engine: $('optEngine'), camSel: $('camSel'), status: $('status'),
   btnCam: $('btnCam'), btnSnap: $('btnSnap'), btnView: $('btnView'), btnFlip: $('btnFlip'), loading: $('loading'), exprTitle: $('exprTitle') };
-const chips = { face: $('chipFace'), body: $('chipBody'), L: $('chipL'), R: $('chipR') };
+const chips = { face: $('chipFace'), body: $('chipBody'), L: $('chipL'), R: $('chipR'), phone: $('chipPhone') };
 const state = { W: 640, H: 480, mirror: true, running: false, note: '', noteAt: 0 };
 function note(msg) { state.note = msg; state.noteAt = performance.now(); setStatus(); }
 window.addEventListener('error', ev => note('error: ' + String(ev.message || ev.error || '').slice(0, 120)));
@@ -847,6 +849,78 @@ $('avatarRest').onclick = async () => {
   avatarInfo.textContent='Rest pose · start camera to track';
 };
 
+// ---------------------------------------------------------------- a phone in the hand
+// When he films his reflection in a mirror, the character holds a phone. An object detector finds
+// 'cell phone' boxes every 4th frame; a box near a hand's palm marks that hand as holding (kept for
+// 30 frames). The slab is placed from the 21 hand points alone, so the same maths serves the 2D
+// overlay, the 3D puppet and the character on the camera: long edge across the palm (index -> pinky),
+// lying on the palm side where the thumb curls, sized by the hand length (wrist -> middle knuckle).
+const phone = { det: null, boxes: [], seen: { L: -1e9, R: -1e9 }, frame: 0, meshes: {} };
+async function ensurePhoneDetector() {
+  if (phone.det || phone.loading) return; phone.loading = true;
+  try {
+    const fs = await getFileset(), buf = await bigFile(MODEL.phone);
+    const opts = d => ({ baseOptions: { modelAssetBuffer: buf, delegate: d }, runningMode: 'VIDEO', scoreThreshold: 0.3, maxResults: 3, categoryAllowlist: ['cell phone'] });
+    try { phone.det = await ObjectDetector.createFromOptions(fs, opts('GPU')); }
+    catch (e) { console.warn('phone detector on GPU failed, CPU', e); phone.det = await ObjectDetector.createFromOptions(fs, opts('CPU')); }
+  } catch (e) { console.error('phone detector failed', e); note('phone detector did not start'); }
+  phone.loading = false;
+}
+function detectPhones(ts) {   // every 4th frame, only in 'auto'
+  if (!phone.det || $('optPhone').value !== 'auto' || (phone.frame % 4)) return;
+  try { phone.boxes = phone.det.detectForVideo(video, ts).detections.map(d => d.boundingBox); }
+  catch (e) { console.warn('phone detect failed', e); phone.det = null; }
+}
+const phoneMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.35, metalness: 0.3 });
+const bumpMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3c, roughness: 0.5 });
+function phoneMesh(side) {
+  if (phone.meshes[side]) return phone.meshes[side];
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), phoneMat);          // x: long edge, y: short edge, z: thickness
+  const bump = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.22, 0.6), bumpMat); // camera island on the face away from the palm
+  bump.position.set(-0.36, 0.3, 0.55); m.add(bump);
+  m.visible = false; scene.add(m); phone.meshes[side] = m; return m;
+}
+const _pc = new THREE.Vector3(), _pl = new THREE.Vector3(), _ps = new THREE.Vector3(), _pn = new THREE.Vector3(), _pf = new THREE.Vector3(), _pm = new THREE.Matrix4();
+function phoneFrame(pts) {   // pts: 21 Vector3-like points -> { c, long, short, normal, L }
+  _pc.set(0, 0, 0); for (const i of [0, 5, 9, 13, 17]) _pc.add(pts[i]); _pc.multiplyScalar(0.2);
+  _pl.subVectors(pts[5], pts[17]).normalize();
+  _pf.subVectors(pts[9], pts[0]); const L = _pf.length(); if (L < 1e-6) return null;
+  _pn.crossVectors(_pl, _pf).normalize();
+  _ps.subVectors(pts[4], _pc); if (_pn.dot(_ps) < 0) _pn.negate();   // the palm side is where the thumb tip curls to
+  _ps.crossVectors(_pn, _pl).normalize();
+  return { c: _pc, long: _pl, short: _ps, normal: _pn, L };
+}
+function holding(side) { return $('optPhone').value === side || ($('optPhone').value === 'auto' && phone.frame - phone.seen[side] < 30); }
+function updatePhones(res) {
+  phone.frame++;
+  const W = state.W, H = state.H;
+  for (const h of res.hands) {   // a box near the palm -> this hand holds the phone
+    const cx = (h.img[0].x + h.img[9].x) / 2 * W, cy = (h.img[0].y + h.img[9].y) / 2 * H, hand = Math.hypot((h.img[9].x - h.img[0].x) * W, (h.img[9].y - h.img[0].y) * H);
+    for (const b of phone.boxes) {
+      const bx = b.originX + b.width / 2, by = b.originY + b.height / 2, reach = Math.max(Math.hypot(b.width, b.height) * 0.6, hand * 2);
+      if (Math.hypot(bx - cx, by - cy) < reach) phone.seen[h.side] = phone.frame;
+    }
+  }
+  let any = false;
+  for (const side of ['L', 'R']) {
+    const m = phoneMesh(side), h = res.hands.find(x => x.side === side);
+    if (!h || !holding(side) || !ui.hands.checked) { m.visible = false; continue; }
+    let pts, flip = false;
+    if (isOverlay() && avatar.root && avatar.imagePoints) {
+      pts = Array.from({ length: 21 }, (_, i) => avatar.imagePoints.get(side + i)); flip = state.mirror;
+      if (pts.some(v => !v)) { m.visible = false; continue; }
+    } else pts = handRig[side].pts;
+    const f = phoneFrame(pts); if (!f) { m.visible = false; continue; }
+    if (flip) { f.c.x *= -1; f.long.x *= -1; f.short.x *= -1; f.short.negate(); f.normal.crossVectors(f.long, f.short); }   // reflected, still right-handed
+    m.position.copy(f.c).addScaledVector(f.normal, f.L * 0.22);
+    _pm.makeBasis(f.long, f.short, f.normal); m.quaternion.setFromRotationMatrix(_pm);
+    m.scale.set(f.L * 1.47, f.L * 0.72, f.L * 0.08);
+    m.visible = true; any = true;
+  }
+  chips.phone.classList.toggle('on', any);
+}
+$('optPhone').onchange = () => { if ($('optPhone').value === 'auto') ensurePhoneDetector(); };
+
 // ---------------------------------------------------------------- 2D overlay
 function strokePairs(pts, pairs, W, H, ok) {
   octx.beginPath();
@@ -892,6 +966,19 @@ function draw2D(res) {
     }
   }
   for (const h of res.hands) {
+    if (holding(h.side)) {   // the phone as a rectangle across the palm, camera dot in a corner
+      const q = h.img, X = i => q[i].x * W, Y = i => q[i].y * H;
+      const cx = [0, 5, 9, 13, 17].reduce((a, i) => a + X(i), 0) / 5, cy = [0, 5, 9, 13, 17].reduce((a, i) => a + Y(i), 0) / 5;
+      let lx = X(5) - X(17), ly = Y(5) - Y(17); const ll = Math.hypot(lx, ly) || 1; lx /= ll; ly /= ll;
+      const L = Math.hypot(X(9) - X(0), Y(9) - Y(0)), a = L * 0.735, b = L * 0.36, sx = -ly, sy = lx;
+      octx.save(); octx.fillStyle = 'rgba(28,28,30,0.75)'; octx.strokeStyle = '#e4e6ea'; octx.lineWidth = 2 * s;
+      octx.beginPath();
+      octx.moveTo(cx + lx * a + sx * b, cy + ly * a + sy * b); octx.lineTo(cx - lx * a + sx * b, cy - ly * a + sy * b);
+      octx.lineTo(cx - lx * a - sx * b, cy - ly * a - sy * b); octx.lineTo(cx + lx * a - sx * b, cy + ly * a - sy * b); octx.closePath();
+      octx.fill(); octx.stroke();
+      octx.beginPath(); octx.arc(cx - lx * a * 0.72 + sx * b * 0.5, cy - ly * a * 0.72 + sy * b * 0.5, Math.max(2, L * 0.07), 0, Math.PI * 2); octx.stroke();
+      octx.restore();
+    }
     octx.strokeStyle = CSS[h.side]; octx.lineWidth = 2.5 * s;
     strokePairs(h.img, HAND_BONES, W, H);
     octx.fillStyle = CSS[h.side]; dots(h.img, [...Array(21).keys()], W, H, 3.5 * s);
@@ -944,6 +1031,7 @@ function present(res) {
   chips.L.classList.toggle('on', seen.L); chips.R.classList.toggle('on', seen.R);
   updateBlend(res.blend, hasFace);
   updateAvatar(res);
+  updatePhones(res);
 }
 
 // ---------------------------------------------------------------- engine management
@@ -982,6 +1070,7 @@ async function useEngine(sel) {
     console.log('files from the local store:', dl.fromStore, '| downloaded MB:', (dl.done / 1e6).toFixed(1));
     if (wanted !== key) { b.close(); return; }
     backend = b; wanted = null; resetSmoothing(); if (ui.loading.dataset.kind !== 'card') ui.loading.classList.add('hidden'); setStatus();
+    if ($('optPhone').value === 'auto') ensurePhoneDetector();
   } catch (e) {
     console.error('engine failed', key, e);
     if (sel === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; return useEngine('auto'); }
@@ -1124,6 +1213,7 @@ function loop() {
     let res = null;
     const t0 = performance.now();
     try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
+    if (res) detectPhones(ts);
     const t1 = performance.now();
     if (res) { present(res); frames++; }
     const t2 = performance.now();
@@ -1136,7 +1226,7 @@ function loop() {
 }
 
 // a small handle for testing from the console
-window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
+window.mirrorPuppet = { state, phone, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
 
 configureDisplay(); loadAvatar().catch(() => {});
 loop();

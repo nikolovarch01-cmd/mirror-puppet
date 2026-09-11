@@ -181,3 +181,19 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   Verified only with the synthetic figure; he judges it live.
 - His phone numbers (iPhone, Messenger browser, front camera, 960×1280): 19 fps, detect 48 ms,
   draw 1 ms. The lag is recognition, not drawing.
+
+## Phone in the hand — 2026-09-11, late evening (owner's ask: filming his reflection in a mirror)
+
+- `ObjectDetector` (efficientdet_lite0 float16, 7.3 MB, class `cell phone`, score ≥ 0.3) runs every
+  4th frame in `Phone: auto`; a box whose centre is near a hand's palm (within max(0.6·box diagonal,
+  2·hand length)) marks that hand as holding for 30 frames. `Phone` menu: auto / left hand / right hand / off.
+- The slab is placed from the 21 hand points alone (`phoneFrame`): long edge across the palm
+  (index → pinky knuckles), on the palm side where the thumb tip curls, offset 0.22·hand length, sized
+  1.47 × 0.72 × 0.08 of the hand length (wrist → middle knuckle ≈ 10 cm → 14.7 × 7.2 × 0.8 cm). Same maths
+  for the 2D overlay (rectangle + camera dot), the 3D puppet / Character 3D (`handRig[side].pts`) and
+  On camera (`avatar.imagePoints`, reflected for Mirror with a right-handed basis). A camera island sits
+  on the face away from the palm — what a mirror shows.
+- Chip `phone`; `tools/phone-harness.html` (detector loads, auto association + 30-frame release,
+  slab in all three modes); `window.mirrorPuppet.phone` for tests.
+- Not verified with a real phone in a real hand; the detector's hit rate on a phone seen in a mirror
+  (back side, dark) is unknown — if it misses, `Phone: left hand` / `right hand` forces it.

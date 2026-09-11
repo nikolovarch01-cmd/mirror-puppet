@@ -1,0 +1,66 @@
+<!doctype html><title>harness</title>
+<iframe id="f" src="/mirror-puppet.html" width="1300" height="720" allow="camera *; microphone *" style="border:0"></iframe>
+<script>
+const log = (...a) => console.log('HARNESS', ...a);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function post(name, dataUrl) { const r = await fetch('/save/' + name, { method: 'POST', body: dataUrl }); log('saved', name, r.status); }
+function synth(st) {
+  const A = st.H / st.W;
+  const P = (x, y, z = 0, visibility = 1) => ({ x, y, z, visibility });
+  const pose = Array.from({ length: 33 }, () => P(0.5, 0.5, 0, 0));
+  const set = (i, x, y, z = 0) => { pose[i] = P(x, y, z, 1); };
+  set(0, 0.5, 0.28); set(2, 0.48, 0.26); set(5, 0.52, 0.26); set(7, 0.455, 0.28); set(8, 0.545, 0.28);
+  set(11, 0.62, 0.45); set(12, 0.38, 0.45); set(13, 0.70, 0.62); set(14, 0.30, 0.62); set(15, 0.72, 0.40, -0.2); set(16, 0.28, 0.40, -0.2);
+  set(23, 0.58, 0.80); set(24, 0.42, 0.80); set(25, 0.60, 1.05); set(26, 0.40, 1.05); set(27, 0.60, 1.30); set(28, 0.40, 1.30);
+  set(29, 0.60, 1.32, .025); set(30, 0.40, 1.32, .025); set(31, .62, 1.33, -.10); set(32, .38, 1.33, -.10);
+  const K = 1.5, hx = 0.5, hy = 0.80;
+  const poseWorld = pose.map(p => ({ x: (p.x - hx) * K, y: (p.y - hy) * A * K, z: p.z * K, visibility: p.visibility }));
+  function hand(wx, wy, dir) {
+    const img = [P(wx, wy, 0)];
+    const fingers = [[-1.0, 3], [-0.5, 4], [-0.15, 4], [0.2, 4], [0.55, 3]];
+    for (const [ang, n] of fingers) for (let j = 1; j <= 4; j++) {
+      const L = j <= n ? j * 0.028 : n * 0.028;
+      img.push(P(wx + Math.cos(dir + ang) * L, wy + Math.sin(dir + ang) * L / A, -0.01 * j));
+    }
+    const world = img.map(p => ({ x: (p.x - wx) * K, y: (p.y - wy) * A * K, z: p.z * K, visibility: 1 }));
+    return { img, world };
+  }
+  const hL = hand(0.72, 0.40, -Math.PI / 2 - 0.3), hR = hand(0.28, 0.40, -Math.PI / 2 + 0.3);
+  const cx = 0.5, cy = 0.28, face = [];
+  for (let i = 0; i < 478; i++) {
+    const t = i * 2.399963, r = Math.sqrt((i + 0.5) / 478);
+    face.push(P(cx + r * Math.cos(t) * 0.04, cy + r * Math.sin(t) * 0.05 / A, -0.035 * (1 - r * r)));
+  }
+  face[1] = P(cx, cy, -0.045); face[4] = P(cx, cy + 0.005, -0.043);
+  face[468] = P(cx - 0.02, cy - 0.015 / A, -0.02); face[473] = P(cx + 0.02, cy - 0.015 / A, -0.02);
+  face[152] = P(cx, cy + 0.05 / A, -0.01); face[10] = P(cx, cy - 0.05 / A, -0.01);
+  const blend = [['jawOpen', 0.72], ['mouthSmileLeft', 0.55], ['mouthSmileRight', 0.5], ['browInnerUp', 0.3], ['eyeBlinkRight', 0.12], ['cheekPuff', 0.05], ['_neutral', 0]].map(([categoryName, score]) => ({ categoryName, score, index: 0, displayName: '' }));
+  return { face, blend, pose, poseWorld, hands: [{ side: 'L', attached: true, img: hL.img, world: hL.world }, { side: 'R', attached: true, img: hR.img, world: hR.world }] };
+}
+(async () => {
+  const w = document.getElementById('f').contentWindow;
+  for (let i = 0; i < 240 && !(w.mirrorPuppet && w.mirrorPuppet.backend); i++) await sleep(250);
+  const mp = w.mirrorPuppet, doc = w.document; await sleep(1500); mp.stopCamera();
+  const res = synth(mp.state); const P=(x,y,z=0)=>({x,y,z}); res.face[234]=P(.46,.28,-.01); res.face[454]=P(.54,.28,-.01);
+  for (let i = 0; i < 160 && !mp.phone.det; i++) await sleep(250);
+  log('PHONE detector loaded', !!mp.phone.det, '| status', doc.getElementById('status').textContent);
+  // auto mode: a fake 'cell phone' box around the synthetic left palm must mark that hand as holding
+  const W = mp.state.W, H = mp.state.H, hL = res.hands[0].img, px = (hL[0].x + hL[9].x) / 2 * W, py = (hL[0].y + hL[9].y) / 2 * H;
+  mp.phone.boxes = [{ originX: px - 60, originY: py - 100, width: 120, height: 200 }];
+  for (let i = 0; i < 5; i++) mp.present(res);
+  log('PHONE auto: chip', doc.getElementById('chipPhone').classList.contains('on'), '| L seen', mp.phone.frame - mp.phone.seen.L < 30, '| R seen', mp.phone.frame - mp.phone.seen.R < 30);
+  mp.phone.boxes = []; for (let i = 0; i < 35; i++) mp.present(res);
+  log('PHONE auto: gone after 35 frames without a box', !doc.getElementById('chipPhone').classList.contains('on'));
+  doc.getElementById('optPhone').value = 'L'; doc.getElementById('optPhone').onchange();
+  for (const mode of ['skeleton', 'character', 'overlay']) {
+    const sel = doc.getElementById('avatarMode'); sel.value = mode; await sel.onchange();
+    if (mode !== 'skeleton') for (let i = 0; i < 400 && !mp.avatar.root; i++) await sleep(100);
+    for (let i = 0; i < 25; i++) mp.present(res);
+    const m = mp.scene.children.find(o => o.isMesh && o.geometry && o.geometry.type === 'BoxGeometry' && o.children.length === 1);
+    log('PHONE', mode, '| chip', doc.getElementById('chipPhone').classList.contains('on'), '| mesh visible', m && m.visible, '| scale', m && m.scale.toArray().map(v => v.toFixed(3)).join(','));
+    mp.renderer.render(mp.scene, mp.renderCamera()); await post('phone-' + mode + '.png', mp.renderer.domElement.toDataURL('image/png'));
+    if (mode === 'skeleton') await post('phone-overlay2d.png', mp.canvases().overlay.toDataURL('image/png'));
+  }
+  log('DONE');
+})().catch(e => log('ERROR', String(e), e && e.stack));
+</script>
