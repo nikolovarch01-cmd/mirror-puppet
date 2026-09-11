@@ -106,7 +106,7 @@ body.novideo .picture video{visibility:hidden}
     <button id="front">Front view</button>
     <div id="hint">drag to rotate · wheel to zoom</div>
   </section>
-  <div id="loading"><div class="box">Loading the recognition models…<br><small>about 35 MB, first time only</small></div></div>
+  <div id="loading"><div class="box">Loading the recognition models…<br><small id="prog">checking this device</small></div></div>
 </main>
 
 <script type="importmap">
@@ -204,8 +204,57 @@ const HEAD_IDS = [0, 2, 5, 7, 8, 9, 10];
 
 // ---------------------------------------------------------------- recognition engines
 // Every engine returns the same shape: { face, blend, pose, poseWorld, hands:[{side:'L'|'R', attached, img, world}] }
+// ---------------------------------------------------------------- local store for the big files
+// Google's storage lets a browser keep a model for one hour and phones empty their caches often, so every big
+// file (the two wasm files and the models) is fetched once, kept in the page's own database and read from
+// there on later visits. If the database is not available the files are simply fetched again.
+const STORE = { db: 'mirror-puppet-v1', name: 'files' };
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(STORE.db, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(STORE.name);
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); r.onblocked = () => rej(new Error('blocked'));
+  });
+}
+async function idbGet(key) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction(STORE.name).objectStore(STORE.name).get(key); t.onsuccess = () => res(t.result); t.onerror = () => rej(t.error); }); }
+async function idbPut(key, val) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction(STORE.name, 'readwrite').objectStore(STORE.name).put(val, key); t.onsuccess = () => res(); t.onerror = () => rej(t.error); }); }
+const dl = { done: 0, total: 0, seen: new Set(), fromStore: 0 };
+function setProg() {
+  const el = document.getElementById('prog'); if (!el) return;
+  el.textContent = dl.total ? 'downloading ' + (dl.done / 1e6).toFixed(0) + ' / ' + (dl.total / 1e6).toFixed(0) + ' MB · kept on this device for next time'
+    : (dl.fromStore ? 'from this device, no download' : 'checking this device');
+}
+async function fetchBig(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('download failed (' + resp.status + ') ' + url.split('/').pop());
+  const total = +resp.headers.get('content-length') || 0;
+  if (total && !dl.seen.has(url)) { dl.seen.add(url); dl.total += total; }
+  if (!resp.body || !resp.body.getReader) { const b = new Uint8Array(await resp.arrayBuffer()); dl.done += b.length; setProg(); return b; }
+  const reader = resp.body.getReader(), chunks = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; dl.done += value.length; setProg(); }
+  const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
+}
+async function bigFile(url) {          // Uint8Array, from the local store when it is there
+  let buf = null;
+  try { buf = await idbGet(url); } catch {}
+  if (buf) { dl.fromStore++; setProg(); return new Uint8Array(buf); }
+  const bytes = await fetchBig(url);
+  try { await idbPut(url, bytes.buffer); } catch {}
+  return bytes;
+}
 let fileset = null;
-async function getFileset() { return fileset || (fileset = await FilesetResolver.forVisionTasks(MPV + '/wasm')); }
+async function getFileset() {
+  if (fileset) return fileset;
+  try {   // the wasm loader and binary from the store, handed to MediaPipe as blob addresses
+    const simd = FilesetResolver.isSimdSupported ? await FilesetResolver.isSimdSupported() : true;
+    const base = MPV + '/wasm/vision_wasm_' + (simd ? '' : 'nosimd_') + 'internal';
+    const [js, wasm] = await Promise.all([bigFile(base + '.js'), bigFile(base + '.wasm')]);
+    fileset = { wasmLoaderPath: URL.createObjectURL(new Blob([js], { type: 'text/javascript' })),
+                wasmBinaryPath: URL.createObjectURL(new Blob([wasm], { type: 'application/wasm' })), local: true };
+  } catch (e) { console.warn('wasm from the store failed, using the CDN', e); fileset = await FilesetResolver.forVisionTasks(MPV + '/wasm'); }
+  return fileset;
+}
 
 async function createBackend(key) {
   const [kind, delegate] = key.split(':');
@@ -214,7 +263,7 @@ async function createBackend(key) {
     // On the GPU the expression part of the combined model fails ("No support of const"),
     // so there the expressions are switched off; the face mesh itself still follows the face.
     const lm = await HolisticLandmarker.createFromOptions(fs, {
-      baseOptions: { modelAssetPath: MODEL.holistic, delegate }, runningMode: 'VIDEO', outputFaceBlendshapes: delegate !== 'GPU' });
+      baseOptions: { modelAssetBuffer: await bigFile(MODEL.holistic), delegate }, runningMode: 'VIDEO', outputFaceBlendshapes: delegate !== 'GPU' });
     return {
       key, label: 'combined · ' + delegate,
       detect(v, ts) {
@@ -233,11 +282,12 @@ async function createBackend(key) {
       close() { lm.close(); },
     };
   }
-  const base = p => ({ baseOptions: { modelAssetPath: p, delegate }, runningMode: 'VIDEO' });
+  const [fb, hb, pb] = await Promise.all([bigFile(MODEL.face), bigFile(MODEL.hand), bigFile(MODEL.pose)]);
+  const base = b => ({ baseOptions: { modelAssetBuffer: b, delegate }, runningMode: 'VIDEO' });
   const [face, hand, pose] = await Promise.all([
-    FaceLandmarker.createFromOptions(fs, { ...base(MODEL.face), numFaces: 1, outputFaceBlendshapes: true }),
-    HandLandmarker.createFromOptions(fs, { ...base(MODEL.hand), numHands: 2 }),
-    PoseLandmarker.createFromOptions(fs, { ...base(MODEL.pose), numPoses: 1 }),
+    FaceLandmarker.createFromOptions(fs, { ...base(fb), numFaces: 1, outputFaceBlendshapes: true }),
+    HandLandmarker.createFromOptions(fs, { ...base(hb), numHands: 2 }),
+    PoseLandmarker.createFromOptions(fs, { ...base(pb), numPoses: 1 }),
   ]);
   return {
     key, label: '3 models · ' + delegate,
@@ -571,10 +621,18 @@ async function useEngine(sel) {
   const key = sel === 'auto' ? CHAIN[chainPos] : sel;
   if (backend && backend.key === key) { ui.loading.classList.add('hidden'); return; }
   wanted = key;
-  showLoading('Loading the recognition models…<br><small>about 35 MB, first time only</small>');
+  showLoading('Loading the recognition models…<br><small id="prog">checking this device</small>');
   const old = backend; backend = null; if (old) old.close();
   try {
-    const b = await createBackend(key);
+    let b;
+    try { b = await createBackend(key); }
+    catch (e) {
+      if (!(fileset && fileset.local)) throw e;
+      console.warn('engine failed with the stored wasm, retrying from the CDN', e);
+      fileset = await FilesetResolver.forVisionTasks(MPV + '/wasm');
+      b = await createBackend(key);
+    }
+    console.log('files from the local store:', dl.fromStore, '| downloaded MB:', (dl.done / 1e6).toFixed(1));
     if (wanted !== key) { b.close(); return; }
     backend = b; wanted = null; resetSmoothing(); if (ui.loading.dataset.kind !== 'card') ui.loading.classList.add('hidden'); setStatus();
   } catch (e) {
