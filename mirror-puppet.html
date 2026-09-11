@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Огледална кукла</title>
+<style>
+:root{--bg:#0f1317;--panel:#161c22;--line:#2a333d;--text:#e6edf3;--muted:#8b9aab;--acc:#5ec8ff;--left:#4fd8ff;--right:#ffb347;--body:#9be29b;--face:#a9d3ff}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column}
+header{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:15px;margin:0 6px 0 0;font-weight:600;white-space:nowrap}
+header label{display:inline-flex;align-items:center;gap:4px;color:var(--muted);white-space:nowrap;cursor:pointer;user-select:none}
+header input[type=checkbox]{accent-color:var(--acc);margin:0}
+header input[type=range]{width:80px;accent-color:var(--acc)}
+button,select{background:#1f2932;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 9px;font:inherit;cursor:pointer}
+button:hover,select:hover{border-color:#3d4a57}
+button.primary{background:var(--acc);color:#04121c;border-color:transparent;font-weight:600}
+#status{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+main{flex:1;display:flex;min-height:0;position:relative}
+.pane{flex:1;position:relative;min-width:0;min-height:0;background:#000;overflow:hidden}
+.pane+.pane{border-left:1px solid var(--line)}
+#cam video,#cam canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+body.mirror #cam video,body.mirror #cam canvas{transform:scaleX(-1)}
+body.novideo #cam video{visibility:hidden}
+#view3d canvas{display:block}
+.chips{position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:2px 8px;border-radius:999px;font-size:12px;background:rgba(15,19,23,.7);color:var(--muted);border:1px solid var(--line)}
+.chip.on{color:#04121c;border-color:transparent}
+.chip.on.face{background:var(--face)}.chip.on.body{background:var(--body)}.chip.on.left{background:var(--left)}.chip.on.right{background:var(--right)}
+#expr{position:absolute;left:10px;bottom:10px;width:240px;background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
+#expr h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted)}
+.bs{display:grid;grid-template-columns:1fr 46px;gap:2px 6px;align-items:center;margin:3px 0}
+.bs .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bs .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.bs .b{grid-column:1/3;height:4px;background:#232c35;border-radius:2px;overflow:hidden}
+.bs .b i{display:block;height:100%;background:var(--acc);width:0}
+#hint{position:absolute;right:10px;bottom:10px;color:var(--muted);font-size:12px;background:rgba(15,19,23,.6);padding:3px 8px;border-radius:6px;pointer-events:none}
+#front{position:absolute;right:10px;top:10px}
+#loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,19,23,.85);color:var(--text);font-size:15px;text-align:center;padding:20px;z-index:5;line-height:1.6}
+#loading.hidden{display:none}
+#loading .box{max-width:640px}
+#loading .row{margin-top:12px;display:flex;gap:8px;justify-content:center}
+#loading small{color:var(--muted);word-break:break-word}
+@media (max-width:760px){main{flex-direction:column}.pane+.pane{border-left:0;border-top:1px solid var(--line)}#expr{width:200px}header{gap:4px 8px;padding:6px 8px}header h1{display:none}#status{margin-left:0;width:100%}}
+</style>
+</head>
+<body class="mirror">
+<header>
+  <h1>Огледална кукла</h1>
+  <button id="btnCam" class="primary">Пусни камерата</button>
+  <select id="camSel" title="Коя камера" hidden></select>
+  <label><input type="checkbox" id="optFace" checked> Лице</label>
+  <label><input type="checkbox" id="optHands" checked> Ръце</label>
+  <label><input type="checkbox" id="optBody" checked> Тяло</label>
+  <label><input type="checkbox" id="optMesh" checked> Мрежа</label>
+  <label><input type="checkbox" id="optMirror" checked> Огледало</label>
+  <label><input type="checkbox" id="optVideo" checked> Видео</label>
+  <label>Плавност <input type="range" id="optSmooth" min="0" max="90" value="50"></label>
+  <label>Двигател <select id="optEngine">
+    <option value="auto">автоматично</option>
+    <option value="sep:GPU">три модела · видеокарта</option>
+    <option value="holistic:GPU">общ модел · видеокарта</option>
+    <option value="sep:CPU">три модела · процесор</option>
+    <option value="holistic:CPU">общ модел · процесор</option>
+  </select></label>
+  <button id="btnSnap" title="Записва картинка от двата панела">Снимка</button>
+  <span id="status">зареждам…</span>
+</header>
+<main>
+  <section class="pane" id="cam">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+    <div class="chips"><span class="chip face" id="chipFace">лице</span><span class="chip body" id="chipBody">тяло</span><span class="chip left" id="chipL">лява ръка</span><span class="chip right" id="chipR">дясна ръка</span></div>
+    <div id="expr"><h2 id="exprTitle">Физиономия</h2><div id="bsList"></div></div>
+  </section>
+  <section class="pane" id="view3d">
+    <button id="front">Отпред</button>
+    <div id="hint">влачи, за да завъртиш · колелце за приближаване</div>
+  </section>
+  <div id="loading"><div class="box">Зареждам моделите за разпознаване…<br><small>около 35 MB, само първия път</small></div></div>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { FilesetResolver, FaceLandmarker, HandLandmarker, PoseLandmarker, HolisticLandmarker }
+  from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+
+// ---------------------------------------------------------------- constants
+const MPV = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1';
+const G = 'https://storage.googleapis.com/mediapipe-models/';
+const IS_MOBILE = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+const MODEL = {
+  face: G + 'face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+  hand: G + 'hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+  pose: G + (IS_MOBILE ? 'pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
+                       : 'pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'),
+  holistic: G + 'holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task',
+};
+const NF = 478;                                   // face mesh points (incl. irises)
+const BODY_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+const BODY_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+const HAND_BONES = HandLandmarker.HAND_CONNECTIONS.map(c => [c.start, c.end]);
+const FACE_TESS = FaceLandmarker.FACE_LANDMARKS_TESSELATION.map(c => [c.start, c.end]);
+const FACE_CONT = [...FaceLandmarker.FACE_LANDMARKS_CONTOURS, ...FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, ...FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS].map(c => [c.start, c.end]);
+const COLOR = { face: 0xa9d3ff, faceLine: 0x6f9cc8, body: 0x9be29b, L: 0x4fd8ff, R: 0xffb347 };
+const CSS = { face: '#a9d3ff', faceLine: 'rgba(111,156,200,0.45)', body: '#9be29b', L: '#4fd8ff', R: '#ffb347' };
+const BS_BG = {
+  browDownLeft: 'вежда надолу (ляво)', browDownRight: 'вежда надолу (дясно)', browInnerUp: 'вежди нагоре (вътре)',
+  browOuterUpLeft: 'вежда нагоре (ляво)', browOuterUpRight: 'вежда нагоре (дясно)', cheekPuff: 'надути бузи',
+  cheekSquintLeft: 'присвита буза (ляво)', cheekSquintRight: 'присвита буза (дясно)', eyeBlinkLeft: 'мигане (ляво)',
+  eyeBlinkRight: 'мигане (дясно)', eyeLookDownLeft: 'поглед надолу (ляво)', eyeLookDownRight: 'поглед надолу (дясно)',
+  eyeLookInLeft: 'поглед навътре (ляво)', eyeLookInRight: 'поглед навътре (дясно)', eyeLookOutLeft: 'поглед навън (ляво)',
+  eyeLookOutRight: 'поглед навън (дясно)', eyeLookUpLeft: 'поглед нагоре (ляво)', eyeLookUpRight: 'поглед нагоре (дясно)',
+  eyeSquintLeft: 'присвито око (ляво)', eyeSquintRight: 'присвито око (дясно)', eyeWideLeft: 'ококорено око (ляво)',
+  eyeWideRight: 'ококорено око (дясно)', jawForward: 'челюст напред', jawLeft: 'челюст наляво', jawOpen: 'отворена уста',
+  jawRight: 'челюст надясно', mouthClose: 'затворена уста', mouthDimpleLeft: 'трапчинка (ляво)', mouthDimpleRight: 'трапчинка (дясно)',
+  mouthFrownLeft: 'намръщена уста (ляво)', mouthFrownRight: 'намръщена уста (дясно)', mouthFunnel: 'уста фуния',
+  mouthLeft: 'уста наляво', mouthLowerDownLeft: 'долна устна надолу (ляво)', mouthLowerDownRight: 'долна устна надолу (дясно)',
+  mouthPressLeft: 'стиснати устни (ляво)', mouthPressRight: 'стиснати устни (дясно)', mouthPucker: 'нацупена уста',
+  mouthRight: 'уста надясно', mouthRollLower: 'прибрана долна устна', mouthRollUpper: 'прибрана горна устна',
+  mouthShrugLower: 'повдигната долна устна', mouthShrugUpper: 'повдигната горна устна', mouthSmileLeft: 'усмивка (ляво)',
+  mouthSmileRight: 'усмивка (дясно)', mouthStretchLeft: 'разтегната уста (ляво)', mouthStretchRight: 'разтегната уста (дясно)',
+  mouthUpperUpLeft: 'горна устна нагоре (ляво)', mouthUpperUpRight: 'горна устна нагоре (дясно)', noseSneerLeft: 'сбръчкан нос (ляво)',
+  noseSneerRight: 'сбръчкан нос (дясно)', tongueOut: 'език навън',
+};
+
+// ---------------------------------------------------------------- dom / state
+const $ = id => document.getElementById(id);
+const video = $('video'), overlay = $('overlay'), octx = overlay.getContext('2d');
+const ui = { face: $('optFace'), hands: $('optHands'), body: $('optBody'), mesh: $('optMesh'), mirror: $('optMirror'),
+  video: $('optVideo'), smooth: $('optSmooth'), engine: $('optEngine'), camSel: $('camSel'), status: $('status'),
+  btnCam: $('btnCam'), btnSnap: $('btnSnap'), loading: $('loading'), exprTitle: $('exprTitle') };
+const chips = { face: $('chipFace'), body: $('chipBody'), L: $('chipL'), R: $('chipR') };
+const state = { W: 640, H: 480, mirror: true, running: false };
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const aspect = () => state.H / state.W;                       // image y (0..1) -> width units: y * aspect
+const dImg = (a, b) => Math.hypot(a.x - b.x, (a.y - b.y) * aspect());
+const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+// ---------------------------------------------------------------- recognition engines
+// Every engine returns the same shape: { face, blend, pose, poseWorld, hands:[{side:'L'|'R', attached, img, world}] }
+let fileset = null;
+async function getFileset() { return fileset || (fileset = await FilesetResolver.forVisionTasks(MPV + '/wasm')); }
+
+async function createBackend(key) {
+  const [kind, delegate] = key.split(':');
+  const fs = await getFileset();
+  const where = delegate === 'GPU' ? 'видеокарта' : 'процесор';
+  if (kind === 'holistic') {
+    // On the video card the expression part of the combined model fails ("No support of const"),
+    // so there the expressions are switched off; the face mesh itself still follows the face.
+    const lm = await HolisticLandmarker.createFromOptions(fs, {
+      baseOptions: { modelAssetPath: MODEL.holistic, delegate }, runningMode: 'VIDEO', outputFaceBlendshapes: delegate !== 'GPU' });
+    return {
+      key, label: 'общ модел · ' + where,
+      detect(v, ts) {
+        const r = lm.detectForVideo(v, ts);
+        const hands = [];
+        if (ui.hands.checked) {
+          if (r.leftHandLandmarks.length) hands.push({ side: 'L', attached: true, img: r.leftHandLandmarks[0], world: r.leftHandWorldLandmarks[0] });
+          if (r.rightHandLandmarks.length) hands.push({ side: 'R', attached: true, img: r.rightHandLandmarks[0], world: r.rightHandWorldLandmarks[0] });
+        }
+        return {
+          face: ui.face.checked ? r.faceLandmarks[0] || null : null,
+          blend: ui.face.checked && r.faceBlendshapes[0] ? r.faceBlendshapes[0].categories : null,
+          pose: r.poseLandmarks[0] || null, poseWorld: r.poseWorldLandmarks[0] || null, hands,
+        };
+      },
+      close() { lm.close(); },
+    };
+  }
+  const base = p => ({ baseOptions: { modelAssetPath: p, delegate }, runningMode: 'VIDEO' });
+  const [face, hand, pose] = await Promise.all([
+    FaceLandmarker.createFromOptions(fs, { ...base(MODEL.face), numFaces: 1, outputFaceBlendshapes: true }),
+    HandLandmarker.createFromOptions(fs, { ...base(MODEL.hand), numHands: 2 }),
+    PoseLandmarker.createFromOptions(fs, { ...base(MODEL.pose), numPoses: 1 }),
+  ]);
+  return {
+    key, label: 'три модела · ' + where,
+    detect(v, ts) {
+      const out = { face: null, blend: null, pose: null, poseWorld: null, hands: [] };
+      if (ui.face.checked) {
+        const r = face.detectForVideo(v, ts);
+        out.face = r.faceLandmarks[0] || null;
+        out.blend = r.faceBlendshapes[0] ? r.faceBlendshapes[0].categories : null;
+      }
+      if (ui.body.checked) {
+        const r = pose.detectForVideo(v, ts);
+        out.pose = r.landmarks[0] || null; out.poseWorld = r.worldLandmarks[0] || null;
+      }
+      if (ui.hands.checked) {
+        const r = hand.detectForVideo(v, ts);
+        out.hands = r.landmarks.map((img, i) => ({ side: null, attached: false,
+          label: r.handedness[i] && r.handedness[i][0] ? r.handedness[i][0].categoryName : 'Right', img, world: r.worldLandmarks[i] }));
+        assignHands(out.hands, out.pose);
+      }
+      return out;
+    },
+    close() { face.close(); hand.close(); pose.close(); },
+  };
+}
+
+// With three separate models the hands are tied to the nearest wrist of the body (in image space);
+// a hand that has no wrist nearby keeps its own label and is placed by its image position.
+function assignHands(hands, pose) {
+  if (pose) {
+    const wr = { L: pose[15], R: pose[16] };
+    const cand = [];
+    for (const h of hands) for (const s of ['L', 'R']) {
+      if (wr[s].visibility != null && wr[s].visibility < 0.3) continue;
+      cand.push({ h, s, d: dImg(h.img[0], wr[s]) });
+    }
+    cand.sort((a, b) => a.d - b.d);
+    const usedS = new Set(), usedH = new Set();
+    for (const c of cand) {
+      if (c.d > 0.12 || usedS.has(c.s) || usedH.has(c.h)) continue;
+      c.h.side = c.s; c.h.attached = true; usedS.add(c.s); usedH.add(c.h);
+    }
+  }
+  const taken = new Set(hands.filter(h => h.side).map(h => h.side));
+  for (const h of hands) if (!h.side) {
+    let s = h.label === 'Left' ? 'L' : 'R';
+    if (taken.has(s)) s = s === 'L' ? 'R' : 'L';
+    h.side = s; taken.add(s);
+  }
+}
+
+// ---------------------------------------------------------------- 3D scene
+const view = $('view3d');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1317);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 30);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistance = 0.3; controls.maxDistance = 8;
+function frontView() { camera.position.set(0, 0.15, 1.9); controls.target.set(0, 0.1, 0); controls.update(); }
+frontView();
+scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x1a2027, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(1.5, 2.5, 2); scene.add(sun);
+const grid = new THREE.GridHelper(4, 20, 0x2c3944, 0x1b232b); grid.position.y = -0.85; scene.add(grid);
+
+const sphereGeo = new THREE.SphereGeometry(1, 14, 10);
+const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 10);
+const matBone = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.55, metalness: 0.05 });
+const matJoint = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.4, emissive: new THREE.Color(c).multiplyScalar(0.25) });
+const _up = new THREE.Vector3(0, 1, 0), _dir = new THREE.Vector3();
+function setBone(mesh, a, b, r) {
+  _dir.subVectors(b, a);
+  const len = _dir.length();
+  if (len < 1e-4) { mesh.visible = false; return; }
+  mesh.visible = true;
+  mesh.position.addVectors(a, b).multiplyScalar(0.5);
+  mesh.scale.set(r, len, r);
+  mesh.quaternion.setFromUnitVectors(_up, _dir.multiplyScalar(1 / len));
+}
+// A rig: joints (spheres) + bones (cylinders) over a point table `pts`
+function makeRig(jointIds, bones, nPts, color, rJoint, rBone) {
+  const group = new THREE.Group(); group.visible = false; scene.add(group);
+  const jm = matJoint(color), bm = matBone(color);
+  const joints = jointIds.map(() => { const m = new THREE.Mesh(sphereGeo, jm); m.scale.setScalar(rJoint); group.add(m); return m; });
+  const boneMeshes = bones.map(() => { const m = new THREE.Mesh(cylGeo, bm); group.add(m); return m; });
+  const pts = Array.from({ length: nPts }, () => new THREE.Vector3());
+  return {
+    group, pts,
+    update(ok) {
+      jointIds.forEach((id, k) => { const on = !ok || ok(id); joints[k].visible = on; if (on) joints[k].position.copy(pts[id]); });
+      bones.forEach(([a, b], k) => { if (ok && !(ok(a) && ok(b))) { boneMeshes[k].visible = false; return; } setBone(boneMeshes[k], pts[a], pts[b], rBone); });
+    },
+  };
+}
+const body = makeRig(BODY_JOINTS, BODY_BONES, 33, COLOR.body, 0.022, 0.013);
+const handRig = { L: makeRig([...Array(21).keys()], HAND_BONES, 21, COLOR.L, 0.009, 0.0055),
+                  R: makeRig([...Array(21).keys()], HAND_BONES, 21, COLOR.R, 0.009, 0.0055) };
+const neck = new THREE.Mesh(cylGeo, matBone(COLOR.body)); neck.visible = false; scene.add(neck);
+const head = new THREE.Mesh(sphereGeo, matBone(COLOR.face)); head.scale.setScalar(0.085); head.visible = false; scene.add(head);
+
+// The face: 478 shared points, drawn as the mesh (thin), the contours (bright) and dots
+const facePos = new Float32Array(NF * 3);
+const faceAttr = new THREE.BufferAttribute(facePos, 3); faceAttr.setUsage(THREE.DynamicDrawUsage);
+const mkGeo = idx => { const g = new THREE.BufferGeometry(); g.setAttribute('position', faceAttr); if (idx) g.setIndex(new THREE.BufferAttribute(new Uint16Array(idx.flat()), 1)); return g; };
+const faceGroup = new THREE.Group(); faceGroup.visible = false; scene.add(faceGroup);
+const tessLines = new THREE.LineSegments(mkGeo(FACE_TESS), new THREE.LineBasicMaterial({ color: COLOR.faceLine, transparent: true, opacity: 0.45 }));
+const contLines = new THREE.LineSegments(mkGeo(FACE_CONT), new THREE.LineBasicMaterial({ color: 0xdff0ff }));
+const facePoints = new THREE.Points(mkGeo(null), new THREE.PointsMaterial({ color: COLOR.face, size: 0.0045 }));
+for (const o of [tessLines, contLines, facePoints]) { o.frustumCulled = false; faceGroup.add(o); }
+
+// ---------------------------------------------------------------- coordinates
+// Image landmarks: x,y in 0..1 of the frame, z in the same units as x, smaller = closer to the camera.
+// World landmarks (body, hands): metres, axes like the image (x right, y down, z depth).
+// Scene: x right, y up, z towards the viewer. In mirror mode x is flipped so the puppet is a reflection.
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _t = new THREE.Vector3();
+function imgToScene(p, k, out) {           // point in the frame -> a plane facing the viewer, k = metres per frame width
+  const sx = state.mirror ? -1 : 1;
+  return out.set(sx * (p.x - 0.5) * k, -(p.y - 0.5) * aspect() * k, 0);
+}
+function deltaToScene(dx, dy, dz, out) {   // a metric offset in world axes -> scene axes
+  const sx = state.mirror ? -1 : 1;
+  return out.set(sx * dx, -dy, -dz);
+}
+
+// Smoothing: an exponential average per point; a part that reappears starts fresh.
+const sm = { body: { arr: new Float32Array(33 * 3), on: false }, L: { arr: new Float32Array(21 * 3), on: false },
+             R: { arr: new Float32Array(21 * 3), on: false }, face: { arr: new Float32Array(NF * 3), on: false } };
+function smoothInto(store, i, v) {
+  const a = store.on ? 1 - ui.smooth.value / 100 : 1, k = i * 3, arr = store.arr;
+  arr[k] += (v.x - arr[k]) * a; arr[k + 1] += (v.y - arr[k + 1]) * a; arr[k + 2] += (v.z - arr[k + 2]) * a;
+  v.set(arr[k], arr[k + 1], arr[k + 2]);
+}
+function resetSmoothing() { for (const s of Object.values(sm)) s.on = false; }
+
+// ---------------------------------------------------------------- puppet update
+function updateBody(res) {
+  const pw = res.poseWorld, pi = res.pose;
+  if (!pw || !pi) { body.group.visible = false; sm.body.on = false; return false; }
+  // metres per frame width, read off the shoulders; the shoulder midpoint is placed by its position in the frame
+  const dI = dImg(pi[11], pi[12]), dW = d3(pw[11], pw[12]);
+  const k = clamp(dI > 1e-3 ? dW / dI : 1, 0.3, 4);
+  imgToScene({ x: (pi[11].x + pi[12].x) / 2, y: (pi[11].y + pi[12].y) / 2 }, k, _a);
+  const mx = (pw[11].x + pw[12].x) / 2, my = (pw[11].y + pw[12].y) / 2, mz = (pw[11].z + pw[12].z) / 2;
+  for (let i = 0; i < 33; i++) {
+    deltaToScene(pw[i].x - mx, pw[i].y - my, pw[i].z - mz, _t).add(_a);
+    smoothInto(sm.body, i, _t);
+    body.pts[i].copy(_t);
+  }
+  sm.body.on = true;
+  body.group.visible = ui.body.checked;
+  if (ui.body.checked) body.update(id => (pw[id].visibility == null || pw[id].visibility > 0.5));
+  return true;
+}
+function updateHand(h) {
+  const rig = handRig[h.side], store = sm[h.side];
+  if (h.attached && sm.body.on) _b.copy(body.pts[h.side === 'L' ? 15 : 16]);
+  else {
+    const k = clamp(d3(h.world[0], h.world[9]) / Math.max(1e-3, dImg(h.img[0], h.img[9])), 0.3, 4);
+    imgToScene(h.img[0], k, _b);
+  }
+  const w0 = h.world[0];
+  for (let i = 0; i < 21; i++) {
+    deltaToScene(h.world[i].x - w0.x, h.world[i].y - w0.y, h.world[i].z - w0.z, _t).add(_b);
+    smoothInto(store, i, _t);
+    rig.pts[i].copy(_t);
+  }
+  store.on = true; rig.group.visible = true; rig.update();
+}
+function updateFace(res) {
+  const f = res.face;
+  if (!f) { faceGroup.visible = false; sm.face.on = false; return false; }
+  // scale from the distance between the pupils (63 mm), anchored at the nose of the body when there is one
+  const ipd = dImg(f[468], f[473]);
+  const k = clamp(ipd > 1e-3 ? 0.063 / ipd : 1, 0.2, 6);
+  const n = f[1], asp = aspect();
+  if (sm.body.on) _b.copy(body.pts[0]); else imgToScene(n, k, _b);
+  for (let i = 0; i < NF; i++) {
+    const p = f[i];
+    deltaToScene((p.x - n.x) * k, (p.y - n.y) * asp * k, (p.z - n.z) * k, _t).add(_b);
+    smoothInto(sm.face, i, _t);
+    facePos[i * 3] = _t.x; facePos[i * 3 + 1] = _t.y; facePos[i * 3 + 2] = _t.z;
+  }
+  faceAttr.needsUpdate = true;
+  sm.face.on = true; faceGroup.visible = true; tessLines.visible = ui.mesh.checked;
+  return true;
+}
+function updateNeckAndHead(hasBody, hasFace) {
+  if (!hasBody || !ui.body.checked) { neck.visible = false; head.visible = false; return; }
+  _a.addVectors(body.pts[11], body.pts[12]).multiplyScalar(0.5);
+  if (hasFace) { _b.set(facePos[152 * 3], facePos[152 * 3 + 1], facePos[152 * 3 + 2]); head.visible = false; }
+  else { _b.copy(body.pts[0]); _b.z -= 0.05; head.visible = true; head.position.copy(_b); _b.y -= 0.08; }
+  setBone(neck, _a, _b, 0.02);
+}
+
+// ---------------------------------------------------------------- 2D overlay
+function strokePairs(pts, pairs, W, H, ok) {
+  octx.beginPath();
+  for (const [a, b] of pairs) {
+    if (ok && !ok(a, b)) continue;
+    octx.moveTo(pts[a].x * W, pts[a].y * H); octx.lineTo(pts[b].x * W, pts[b].y * H);
+  }
+  octx.stroke();
+}
+function dots(pts, ids, W, H, r, ok) {
+  octx.beginPath();
+  for (const i of ids) { if (ok && !ok(i)) continue; octx.moveTo(pts[i].x * W + r, pts[i].y * H); octx.arc(pts[i].x * W, pts[i].y * H, r, 0, Math.PI * 2); }
+  octx.fill();
+}
+function draw2D(res) {
+  const W = overlay.width, H = overlay.height;
+  octx.clearRect(0, 0, W, H);
+  if (!ui.video.checked) { octx.fillStyle = '#000'; octx.fillRect(0, 0, W, H); }
+  const s = W / 640;
+  octx.lineCap = 'round'; octx.lineJoin = 'round';
+  if (res.pose && ui.body.checked) {
+    const p = res.pose, vis = i => (p[i].visibility == null || p[i].visibility > 0.5);
+    octx.strokeStyle = CSS.body; octx.lineWidth = 3 * s;
+    strokePairs(p, BODY_BONES, W, H, (a, b) => vis(a) && vis(b));
+    octx.fillStyle = CSS.body; dots(p, BODY_JOINTS, W, H, 5 * s, vis);
+  }
+  for (const h of res.hands) {
+    octx.strokeStyle = CSS[h.side]; octx.lineWidth = 2.5 * s;
+    strokePairs(h.img, HAND_BONES, W, H);
+    octx.fillStyle = CSS[h.side]; dots(h.img, [...Array(21).keys()], W, H, 3.5 * s);
+  }
+  if (res.face) {
+    if (ui.mesh.checked) { octx.strokeStyle = CSS.faceLine; octx.lineWidth = 0.8 * s; strokePairs(res.face, FACE_TESS, W, H); }
+    octx.strokeStyle = CSS.face; octx.lineWidth = 1.6 * s; strokePairs(res.face, FACE_CONT, W, H);
+  }
+}
+
+// ---------------------------------------------------------------- expression bars
+const bsList = $('bsList'), bsRows = [];
+for (let i = 0; i < 6; i++) {
+  const row = document.createElement('div'); row.className = 'bs';
+  row.innerHTML = '<span class="n"></span><span class="v"></span><span class="b"><i></i></span>';
+  bsList.appendChild(row);
+  bsRows.push({ row, n: row.children[0], v: row.children[1], b: row.children[2].firstChild });
+}
+let bsAt = 0;
+function updateBlend(cats, hasFace) {
+  const now = performance.now(); if (now - bsAt < 120) return; bsAt = now;
+  if (!cats || !cats.length) {
+    ui.exprTitle.textContent = hasFace ? 'Физиономия · няма при общ модел на видеокарта' : 'Физиономия · няма лице';
+    bsRows.forEach(r => r.row.style.display = 'none'); return;
+  }
+  ui.exprTitle.textContent = 'Физиономия';
+  const top = cats.filter(c => c.categoryName !== '_neutral').sort((a, b) => b.score - a.score).slice(0, bsRows.length);
+  bsRows.forEach((r, i) => {
+    const c = top[i]; if (!c) { r.row.style.display = 'none'; return; }
+    r.row.style.display = ''; r.n.textContent = BS_BG[c.categoryName] || c.categoryName;
+    const pct = Math.round(c.score * 100); r.v.textContent = pct + '%'; r.b.style.width = pct + '%';
+  });
+}
+
+// ---------------------------------------------------------------- one frame
+function present(res) {
+  draw2D(res);
+  const hasBody = updateBody(res);
+  const hasFace = updateFace(res);
+  const seen = { L: false, R: false };
+  for (const h of res.hands) if (!seen[h.side]) { seen[h.side] = true; updateHand(h); }
+  for (const s of ['L', 'R']) if (!seen[s]) { handRig[s].group.visible = false; sm[s].on = false; }
+  updateNeckAndHead(hasBody, hasFace);
+  chips.face.classList.toggle('on', hasFace);
+  chips.body.classList.toggle('on', hasBody && ui.body.checked);
+  chips.L.classList.toggle('on', seen.L); chips.R.classList.toggle('on', seen.R);
+  updateBlend(res.blend, hasFace);
+}
+
+// ---------------------------------------------------------------- engine management
+const CHAIN = ['sep:GPU', 'sep:CPU', 'holistic:CPU'];   // what "автоматично" tries, in order
+let backend = null, chainPos = 0, wanted = null;
+function showLoading(html) { ui.loading.innerHTML = '<div class="box">' + html + '</div>'; ui.loading.classList.remove('hidden'); }
+// The error card keeps the menu reachable and offers the way back; the long trace stays in the console.
+function showError(title, e) {
+  const reason = String((e && e.message) || e || '').split('===')[0].replace(/\s+/g, ' ').trim().slice(0, 160);
+  showLoading('<b>' + title + '</b><br><small>' + reason.replace(/</g, '&lt;') + '</small>'
+    + '<div class="row"><button id="errAuto" class="primary">Върни автоматично</button><button id="errClose">Затвори</button></div>');
+  ui.loading.querySelector('#errAuto').onclick = () => { ui.engine.value = 'auto'; chainPos = 0; useEngine('auto'); };
+  ui.loading.querySelector('#errClose').onclick = () => { ui.loading.classList.add('hidden'); setStatus(); };
+}
+async function useEngine(sel) {
+  const key = sel === 'auto' ? CHAIN[chainPos] : sel;
+  if (backend && backend.key === key) { ui.loading.classList.add('hidden'); return; }
+  wanted = key;
+  showLoading('Зареждам моделите за разпознаване…<br><small>около 35 MB, само първия път</small>');
+  const old = backend; backend = null; if (old) old.close();
+  try {
+    const b = await createBackend(key);
+    if (wanted !== key) { b.close(); return; }
+    backend = b; wanted = null; resetSmoothing(); ui.loading.classList.add('hidden'); setStatus();
+  } catch (e) {
+    console.error('engine failed', key, e);
+    if (sel === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; return useEngine('auto'); }
+    wanted = null; showError('Този двигател не тръгна', e); setStatus();
+  }
+}
+function onDetectError(e) {
+  console.error('detect failed', backend && backend.key, e);
+  const old = backend; backend = null; if (old) try { old.close(); } catch {}
+  if (ui.engine.value === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; useEngine('auto'); }
+  else { showError('Разпознаването спря', e); setStatus(); }
+}
+ui.engine.onchange = () => { chainPos = 0; useEngine(ui.engine.value); };
+
+// ---------------------------------------------------------------- camera
+let stream = null;
+async function startCamera(deviceId) {
+  stopCamera();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('камерата работи само от файл на компютъра или от https адрес'); return;
+  }
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+  const c = { audio: false, video: deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: 'user', ...size } };
+  try { stream = await navigator.mediaDevices.getUserMedia(c); }
+  catch (e) { setStatus('камерата не е достъпна (' + e.name + ')'); return; }
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  state.running = true; ui.btnCam.textContent = 'Спри камерата'; resetSmoothing(); setStatus();
+  listCameras();
+}
+function stopCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null; state.running = false; ui.btnCam.textContent = 'Пусни камерата'; setStatus();
+}
+async function listCameras() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    if (devs.length < 2) return;
+    ui.camSel.innerHTML = '';
+    devs.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('камера ' + (i + 1)); ui.camSel.appendChild(o); });
+    const cur = stream && stream.getVideoTracks()[0].getSettings().deviceId;
+    if (cur) ui.camSel.value = cur;
+    ui.camSel.hidden = false;
+  } catch {}
+}
+video.addEventListener('loadedmetadata', () => {
+  state.W = video.videoWidth || 640; state.H = video.videoHeight || 480;
+  overlay.width = state.W; overlay.height = state.H; resetSmoothing(); setStatus();
+});
+ui.camSel.onchange = () => startCamera(ui.camSel.value);
+ui.btnCam.onclick = () => state.running ? stopCamera() : startCamera(ui.camSel.hidden ? undefined : ui.camSel.value);
+
+// ---------------------------------------------------------------- controls
+ui.mirror.onchange = () => { state.mirror = ui.mirror.checked; document.body.classList.toggle('mirror', state.mirror); resetSmoothing(); };
+ui.video.onchange = () => document.body.classList.toggle('novideo', !ui.video.checked);
+$('front').onclick = frontView;
+ui.btnSnap.onclick = () => {
+  const W = state.W, H = state.H, c = document.createElement('canvas'); c.width = W * 2; c.height = H;
+  const g = c.getContext('2d'); g.fillStyle = '#0f1317'; g.fillRect(0, 0, c.width, c.height);
+  g.save(); if (state.mirror) { g.translate(W, 0); g.scale(-1, 1); }
+  if (ui.video.checked && video.readyState >= 2) g.drawImage(video, 0, 0, W, H);
+  g.drawImage(overlay, 0, 0, W, H); g.restore();
+  renderer.render(scene, camera);
+  const t = renderer.domElement, f = Math.min(W / t.width, H / t.height), tw = t.width * f, th = t.height * f;
+  g.drawImage(t, W + (W - tw) / 2, (H - th) / 2, tw, th);
+  const a = document.createElement('a');
+  a.download = 'kukla-' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.png';
+  a.href = c.toDataURL('image/png'); a.click();
+};
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight; if (!w || !h) return;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view); resize();
+
+// ---------------------------------------------------------------- loop
+let fps = 0, frames = 0, fpsAt = performance.now(), lastVT = -1, lastTs = 0;
+function setStatus(msg) {
+  const engine = backend ? backend.label : (wanted ? 'зареждам модел' : 'без двигател · избери от менюто');
+  ui.status.textContent = msg || [engine, state.running ? fps + ' к/с' : 'камерата е спряна', state.W + '×' + state.H].join(' · ');
+}
+function loop() {
+  requestAnimationFrame(loop);
+  if (backend && state.running && video.readyState >= 2 && video.currentTime !== lastVT) {
+    lastVT = video.currentTime;
+    let ts = Math.round(performance.now()); if (ts <= lastTs) ts = lastTs + 1; lastTs = ts;
+    let res = null;
+    try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
+    if (res) { present(res); frames++; }
+  }
+  const now = performance.now();
+  if (now - fpsAt >= 1000) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; setStatus(); }
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// a small handle for testing from the console
+window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
+
+loop();
+useEngine(ui.engine.value);
+startCamera();
+</script>
+</body>
+</html>
