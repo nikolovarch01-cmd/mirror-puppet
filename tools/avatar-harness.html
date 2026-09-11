@@ -52,6 +52,7 @@ const check=(ok,name)=>{if(!ok)throw new Error(name);window.avatarTest.checks.pu
   const doc=w.document,res=synth(mp.state);
   const P=(x,y,z=0)=>({x,y,z});
   res.face[234]=P(.46,.28,-.01);res.face[454]=P(.54,.28,-.01);
+  doc.getElementById('avatarMode').value='skeleton';await doc.getElementById('avatarMode').onchange();
   for(let i=0;i<25;i++)mp.present(res);
   check([...doc.querySelectorAll('.chip.on')].length===4,'legacy face/body/hands');
   check(['Spine02','Spine01','Waist'].every(n=>mp.scene.getObjectByName('Guide_CC_Base_'+n)?.visible),'rig-proportioned spine guides');

@@ -73,7 +73,7 @@ body.oncamera:not(.guides).character-ready #overlay{visibility:hidden}
 body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f1317bb;padding:3px 8px}
 </style>
 </head>
-<body class="mirror">
+<body class="mirror oncamera">
 <header>
   <h1>Mirror Puppet</h1>
   <button id="btnCam" class="primary">Start camera</button>
@@ -96,7 +96,7 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
     <option value="sep:CPU">3 models · CPU</option>
     <option value="holistic:CPU">combined · CPU</option>
   </select></label>
-  <label>Display <select id="avatarMode"><option value="skeleton" selected>Skeleton</option><option value="character">Character 3D</option><option value="overlay">On camera</option></select></label>
+  <label>Display <select id="avatarMode"><option value="overlay" selected>On camera</option><option value="character">Character 3D</option><option value="skeleton">Skeleton</option></select></label>
   <label><input type="checkbox" id="optGuides"> Guides on camera</label>
   <button id="avatarRest" title="Stop camera and inspect the character rest pose">Rest pose</button>
   <button id="btnSnap" title="Saves a picture of both views">Snapshot</button>
@@ -789,7 +789,8 @@ function updateCameraAvatar(res) {
   }
   if(face) {
     regions.add('head');
-    const f=i=>point(face[i],'f'+i);
+    const faceDz = (res.pose && p[0]) ? res.pose[0].z - face[1].z : 0;   // face depth -> body depth
+    const f=i=>point(face[i],'f'+i,(face[i].z||0)+faceDz);
     applyFrame(['Head'],orientation(f(454).sub(f(234)),f(10).sub(f(152))),new THREE.Quaternion());
     const left=boneOf('L_Eye'),right=boneOf('R_Eye');
     if(left&&right) {
@@ -1137,7 +1138,7 @@ function loop() {
 // a small handle for testing from the console
 window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
 
-configureDisplay();
+configureDisplay(); loadAvatar().catch(() => {});
 loop();
 useEngine(ui.engine.value);
 startCamera();

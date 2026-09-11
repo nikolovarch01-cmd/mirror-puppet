@@ -167,3 +167,17 @@ Measured (desktop, synthetic figure, JS only): present() 0.3 ms skeleton, 0.45 m
 0.6 ms on-camera. A lag on a phone is therefore recognition (three models) plus GPU drawing of the
 60k-triangle mesh with 4K textures — a 2K texture variant for phones is the next lever, not the JS.
 Open from the owner: "front camera lags, back camera great" (live, iPhone) — not yet resolved.
+
+## 2026-09-11, late — On camera is the default (owner's ask); face depth aligned
+
+- Default display is **On camera** again by the owner's word after seeing it live; the character
+  loads at start (the first visit downloads ~51 MB, later visits nothing — local store).
+  Codex's avatar harness switches to Skeleton before its spine-guides check.
+- Bug he spotted live (iPhone, front camera): the lower face sank into the neck, the torso looked
+  pushed forward. Cause: in the On-camera fit every model's depth is relative to itself (face to its
+  own centre, body to the hips), so the head and the torso sat at unrelated depths under the
+  orthographic camera. Fix: the face cloud is shifted in depth so its nose tip matches the body's
+  nose landmark (`faceDz` in `updateCameraAvatar`), the same way hands are already aligned to the wrist.
+  Verified only with the synthetic figure; he judges it live.
+- His phone numbers (iPhone, Messenger browser, front camera, 960×1280): 19 fps, detect 48 ms,
+  draw 1 ms. The lag is recognition, not drawing.
