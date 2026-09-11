@@ -106,7 +106,41 @@ puppet update → 2D overlay → expression bars → `present()` → engine mana
 - Several people at once (`numPoses > 1`, per-person hand/face assignment).
 - Heavy offline models (WHAM / 4D-Humans → FBX for Unreal): a Python project on the laptop, not this page.
 
-## How to deploy
+## Textured character and rig guides — added 2026-09-11
+
+- Display → Character loads `assets/anatomy-rig.glb?v=1` only when selected, using the existing
+  IndexedDB store. It adds 17.81 MiB: 60,555 triangles, 101 bones, one textured material. Skeleton is
+  still the default. On phones Display is in Settings. GLTFLoader uses the existing pinned three.js.
+- `loadAvatar` captures the imported authored **T pose**, including local and world bone transforms.
+  Do not call Skeleton.pose(): the original FBX bind pose differs from the authored pose. The mesh is
+  normalized to 1.75 m and centered on its hip. GLB skin weights use four normalized influences.
+- `updateAvatar` runs after the old `present` calculations. It uses smoothed landmarks and reference
+  directions/frames, solves in unmirrored space, converts world rotations into parent space, then
+  reflects the completed hierarchy once for Mirror. Never extract rotations through a negative scale.
+- Driven: torso, head, arms, legs, feet, palms and 30 finger bones. Twist/share bones inherit parent
+  movement with authored local transforms. This is directional retargeting, not full IK, twist solving
+  or foot-contact locking. Body needs visible shoulders/hips; head/hands still rotate without hips.
+  Missing parts return to the authored pose. Rest pose stops the camera; Start camera resumes tracking.
+- Only the old 3D guide meshes are hidden in Character mode. Recognition, overlay and expression scores
+  remain available. Front view fits the current character bounds, including in the phone Puppet view.
+- The owner requested feet and intermediate spine guides matching this rig. Feet use ankle/heel/toe
+  triangles (27/29/31 and 28/30/32). Spine02, Spine01, Waist lie at fractions 0.48130966564214805,
+  0.717881114259437, 0.8127676330943147 from NeckTwist01 toward Hip, measured from the authored rig.
+  These are inferred guides, not separately detected vertebrae. No shoulder bar or side torso lines.
+- **Eye and facial deformation deferred by the owner.** Eye/jaw bones exist but have no mesh weights;
+  there are no expression shapes. Removed the inert V_None export placeholder. Head rotation works;
+  pupils, gaze, blinking and mouth deformation still need authoring. Expression score display remains.
+- Change the asset query version when replacing the GLB, otherwise IndexedDB keeps the old rig.
+- `tools/avatar-harness.html` verifies baseline chips, spine guides, unchanged 2D overlay, loaded bones,
+  finite skinned vertices, arm/leg/foot directions, changed arm/finger targets, head/hands without hips,
+  mirror, lost detection, reset and switching back. `?phone` also checks single view, contain video,
+  collapsed expressions and no horizontal overflow. Use the mobile UA to exercise pose_lite.
+- Still requires the owner's live checks: deformation, twist, tracking stability, walking and phone FPS.
+- Verified on 2026-09-11: headless Chrome 153, fresh desktop and mobile-UA profiles, synthetic tests
+  (23 desktop / 28 phone assertions); phone selects pose_lite, model-cache reload downloads 0.0 MB,
+  camera-unavailable card persists after engine load. No live camera or physical phone performance test.
+
+## Deployment procedure
 
 Edit `mirror-puppet.html`, commit, `git push origin main`. GitHub Pages rebuilds in ~1 minute; confirm
 with `curl -s https://nikolovarch01-cmd.github.io/mirror-puppet/mirror-puppet.html | grep <new string>`.

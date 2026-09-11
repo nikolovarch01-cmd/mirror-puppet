@@ -46,3 +46,24 @@ card. The card must stay on screen after the models finish loading, and the head
 
 Face, hands and body on a real camera; the Flip button and the orientation change on a phone; the
 Snapshot button on iOS. Ask the owner; he tests live and sends screenshots.
+
+## 5. Character and rig guides
+
+Use the same server and Chrome command with `/tools/avatar-harness.html`. Expect `AVATAR_DONE`
+and no `AVATAR_ERROR`; `window.avatarTest` contains the done/checks/error result. The GLB adds
+17.81 MiB on first selection and is cached in IndexedDB. Skeleton mode must not download it.
+
+Inspect `avatar-legacy.png`, `avatar-character.png`, `avatar-character-side.png`. Run
+`/tools/avatar-harness.html?phone` with the phone UA for the 390 px iframe checks and
+`avatar-mobile-character.png`. Original harness now has visible synthetic feet; with the three
+rig-proportioned spine guides its expected visible object count becomes 129 (previously 116).
+
+Checks: original face/body/hands, visible spine guides, 2D overlay unchanged across display modes,
+101 bones, finite skinned vertices, limb/foot direction agreement, arm/finger response, head/hands
+without hips, mirror, missing detections, reset and switch back. Phone checks retain single view,
+contain video, closed expressions and no horizontal overflow.
+
+In a restricted Windows sandbox, a fresh isolated headless Chrome profile may require
+`--no-sandbox --disable-gpu-sandbox`. A fake capture-service failure is separate from synthetic
+render/retarget tests and must be reported. Do not treat phone-sized headless tests as a real phone
+performance benchmark. Face and eye deformation is deliberately not implemented in this version.

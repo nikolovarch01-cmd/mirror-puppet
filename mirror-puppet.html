@@ -89,6 +89,8 @@ body.novideo .picture video{visibility:hidden}
     <option value="sep:CPU">3 models · CPU</option>
     <option value="holistic:CPU">combined · CPU</option>
   </select></label>
+  <label>Display <select id="avatarMode"><option value="skeleton">Skeleton</option><option value="character">Character</option></select></label>
+  <button id="avatarRest" title="Stop camera and inspect the character rest pose">Rest pose</button>
   <button id="btnSnap" title="Saves a picture of both views">Snapshot</button>
   </div>
   <span id="status">loading…</span>
@@ -103,6 +105,7 @@ body.novideo .picture video{visibility:hidden}
     <div id="expr"><h2 id="exprTitle">Expression</h2><div id="bsList"></div></div>
   </section>
   <section class="pane" id="view3d">
+    <div id="avatarInfo" style="position:absolute;left:10px;top:10px;max-width:65%;font-size:12px;color:var(--muted);pointer-events:none">Select Character for the textured model</div>
     <button id="front">Front view</button>
     <div id="hint">drag to rotate · wheel to zoom</div>
   </section>
@@ -140,8 +143,14 @@ const UA = (() => {                               // short 'Android · Chrome 15
   const names = { Edg: 'Edge', OPR: 'Opera', CriOS: 'Chrome', FxiOS: 'Firefox', Version: 'Safari' };
   return [os, m ? (names[m[1]] || m[1]) + ' ' + m[2] : ''].filter(Boolean).join(' · ');
 })();
-const BODY_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
-const BODY_BONES = [[11, 13], [13, 15], [12, 14], [14, 16], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+const BODY_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+const BODY_BONES = [[11, 13], [13, 15], [12, 14], [14, 16], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28],
+  [27, 29], [29, 31], [31, 27], [28, 30], [30, 32], [32, 28]];
+// CC_Base_Spine02 / Spine01 / Waist, projected between NeckTwist01 and Hip.
+// Ratios measured from the exported rig's authored pose (same for both display modes).
+// These points are inferred, not additional MediaPipe detections.
+const SPINE_NAMES = ['Spine02','Spine01','Waist'];
+const SPINE_STEPS = [0.48130966564214805, 0.717881114259437, 0.8127676330943147];
 const HAND_BONES = HandLandmarker.HAND_CONNECTIONS.map(c => [c.start, c.end]);
 const FACE_TESS = FaceLandmarker.FACE_LANDMARKS_TESSELATION.map(c => [c.start, c.end]);
 const FACE_CONT = [...FaceLandmarker.FACE_LANDMARKS_CONTOURS, ...FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, ...FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS].map(c => [c.start, c.end]);
@@ -340,6 +349,7 @@ function assignHands(hands, pose) {
 }
 
 // ---------------------------------------------------------------- 3D scene
+const avatar = { root: null, bones: new Map(), rest: new Map(), promise: null, last: null, tracked: false, hip: null, scale: 1 };
 const view = $('view3d');
 const renderer = new THREE.WebGLRenderer({ antialias: !IS_MOBILE });
 renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio || 1, 2));
@@ -350,7 +360,16 @@ scene.background = new THREE.Color(0x0f1317);
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 30);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistance = 0.3; controls.maxDistance = 8;
-function frontView() { camera.position.set(0, 0.15, 1.9); controls.target.set(0, 0.1, 0); controls.update(); }
+function frontView() {
+  if ($('avatarMode').value === 'character' && avatar.root) {
+    avatar.root.updateMatrixWorld(true);
+    const box=new THREE.Box3().setFromObject(avatar.root,true), size=box.getSize(new THREE.Vector3()), center=box.getCenter(new THREE.Vector3());
+    const ar=Math.max(.25,view.clientWidth/Math.max(1,view.clientHeight));
+    const distance=1.18*Math.max(size.y,size.x/ar)/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))+size.z/2;
+    camera.position.set(center.x,center.y,center.z+distance);controls.target.copy(center);
+  } else { camera.position.set(0,0.15,1.9);controls.target.set(0,.1,0); }
+  controls.update();
+}
 frontView();
 scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x1a2027, 1.6));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(1.5, 2.5, 2); scene.add(sun);
@@ -393,6 +412,7 @@ const mkBone = () => { const m = new THREE.Mesh(cylGeo, torsoMat); m.visible = f
 const mkJoint = r => { const m = new THREE.Mesh(sphereGeo, torsoJointMat); m.scale.setScalar(r); m.visible = false; scene.add(m); return m; };
 const neck = mkBone(), clavL = mkBone(), clavR = mkBone(), spine = mkBone();
 const rootJoint = mkJoint(0.024), chinJoint = mkJoint(0.014), pelvisJoint = mkJoint(0.024);
+const spineJoints = SPINE_STEPS.map((_,i) => { const m=mkJoint(.019);m.name='Guide_CC_Base_'+SPINE_NAMES[i];return m; });
 const head = new THREE.Mesh(sphereGeo, matBone(COLOR.face)); head.scale.setScalar(0.085); head.visible = false; scene.add(head);
 let lastPW = null;   // the last pose (world) result, for the visibility of its points
 
@@ -484,7 +504,7 @@ function updateFace(res) {
   return true;
 }
 function updateTorso(hasBody, hasFace) {
-  const parts = [neck, clavL, clavR, spine, rootJoint, chinJoint, pelvisJoint, head];
+  const parts = [neck, clavL, clavR, spine, rootJoint, chinJoint, pelvisJoint, head, ...spineJoints];
   const visW = i => hasBody && lastPW && (lastPW[i].visibility == null || lastPW[i].visibility > 0.5);
   const fp = i => ({ x: facePos[i * 3], y: facePos[i * 3 + 1], z: facePos[i * 3 + 2] });
   let t = null;
@@ -500,9 +520,153 @@ function updateTorso(hasBody, hasFace) {
   head.visible = !hasFace && hasBody; if (head.visible) { head.position.copy(body.pts[0]); head.position.z -= 0.05; }
   if (visW(11)) setBone(clavL, _a, body.pts[11], 0.013); else clavL.visible = false;
   if (visW(12)) setBone(clavR, _a, body.pts[12], 0.013); else clavR.visible = false;
-  if (visW(23) && visW(24)) { _t.addVectors(body.pts[23], body.pts[24]).multiplyScalar(0.5); setBone(spine, _a, _t, 0.014); pelvisJoint.visible = true; pelvisJoint.position.copy(_t); }
-  else { spine.visible = false; pelvisJoint.visible = false; }
+  if (visW(23) && visW(24)) {
+    _t.addVectors(body.pts[23], body.pts[24]).multiplyScalar(0.5); setBone(spine, _a, _t, 0.014);
+    pelvisJoint.visible = true; pelvisJoint.position.copy(_t);
+    spineJoints.forEach((m,i) => { m.visible=true; m.position.lerpVectors(_a,_t,SPINE_STEPS[i]); });
+  } else { spine.visible = false; pelvisJoint.visible = false; spineJoints.forEach(m => m.visible=false); }
 }
+
+// ---------------------------------------------------------------- textured AccuRIG character
+// The recognition engines and point skeleton stay unchanged. Retarget only in this adapter.
+const avatarUI = $('avatarMode'), avatarInfo = $('avatarInfo');
+const vec = p => new THREE.Vector3(p.x, p.y, p.z);
+const canonical = p => { const v = vec(p); if (state.mirror) v.x *= -1; return v; };
+function orientation(x, y) {
+  if (x.lengthSq() < 1e-10 || y.lengthSq() < 1e-10) return null;
+  y.normalize(); x.addScaledVector(y, -x.dot(y));
+  if (x.lengthSq() < 1e-10) return null;
+  x.normalize(); const z = new THREE.Vector3().crossVectors(x, y).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+}
+const boneOf = name => avatar.bones.get('CC_Base_' + name);
+const restOf = name => avatar.rest.get('CC_Base_' + name);
+function refDirection(name, end) {
+  const r = restOf(name), e = restOf(end);
+  return e ? e.p.clone().sub(r.p).normalize() : new THREE.Vector3(0, 1, 0).applyQuaternion(r.q);
+}
+function setWorldRotation(name, q) {
+  const b = boneOf(name); if (!b || !q) return;
+  const parent = b.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+  b.quaternion.copy(parent.multiply(q)); b.updateWorldMatrix(false, true);
+}
+function aim(name, end, from, to) {
+  if (!from || !to || !boneOf(name)) return;
+  const d = to.clone().sub(from); if (d.lengthSq() < 1e-8) return;
+  const q = new THREE.Quaternion().setFromUnitVectors(refDirection(name, end), d.normalize());
+  setWorldRotation(name, q.multiply(restOf(name).q));
+}
+function applyFrame(names, target, reference) {
+  if (!target || !reference) return;
+  const delta = target.clone().multiply(reference.clone().invert());
+  for (const name of names) if (boneOf(name)) setWorldRotation(name, delta.clone().multiply(restOf(name).q));
+}
+function resetAvatar() {
+  if (!avatar.root) return;
+  for (const [name, b] of avatar.bones) {
+    const r = avatar.rest.get(name); b.quaternion.copy(r.localQ); b.position.copy(r.localP); b.scale.copy(r.localS);
+  }
+  avatar.root.scale.setScalar(avatar.scale); avatar.root.position.set(0, -.02, 0); avatar.root.updateMatrixWorld(true);
+  avatar.tracked = false;
+}
+async function loadAvatar() {
+  if (avatar.root) return avatar;
+  if (avatar.promise) return avatar.promise;
+  avatarInfo.textContent = 'Loading character…';
+  avatar.promise = (async () => {
+    // Same pinned three.js release; loaded only when a character is requested.
+    const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+    const bytes = await bigFile(new URL('assets/anatomy-rig.glb?v=1', location.href).href);
+    const gltf = await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '');
+    const root = new THREE.Group(); root.name = 'TrackedCharacter'; root.add(gltf.scene); scene.add(root);
+    root.updateMatrixWorld(true);
+    let skinned = 0;
+    gltf.scene.traverse(b => {
+      if (b.isBone) avatar.bones.set(b.name, b);
+      if (b.isSkinnedMesh) { skinned++; b.frustumCulled = false; }
+    });
+    for (const name of ['Hip','L_Upperarm','R_Upperarm','L_Forearm','R_Forearm','L_Hand','R_Hand','L_Thigh','R_Thigh','L_Calf','R_Calf','L_Foot','R_Foot','Head']) {
+      if (!boneOf(name)) { scene.remove(root); avatar.bones.clear(); throw new Error('Missing character bone: ' + name); }
+    }
+    if (!skinned) throw new Error('Character has no skin');
+    // Preserve the authored T pose, not the FBX bind pose (which may be an A pose).
+    for (const [name,b] of avatar.bones) avatar.rest.set(name, {
+      p: b.getWorldPosition(new THREE.Vector3()), q: b.getWorldQuaternion(new THREE.Quaternion()),
+      localQ: b.quaternion.clone(), localP: b.position.clone(), localS: b.scale.clone()
+    });
+    const box = new THREE.Box3().setFromObject(gltf.scene, true);
+    avatar.scale = 1.75 / box.getSize(new THREE.Vector3()).y;
+    avatar.hip = restOf('Hip').p.clone();
+    gltf.scene.position.sub(avatar.hip);
+    avatar.root = root; resetAvatar(); root.visible = avatarUI.value === 'character';
+    avatarInfo.textContent = 'Body + fingers · face expressions later';
+    if (avatar.last) present(avatar.last);
+    if (root.visible) frontView();
+    return avatar;
+  })().catch(e => {
+    avatar.promise = null; avatarUI.value = 'skeleton'; avatarInfo.textContent = 'Character unavailable · select to retry';
+    note('Character: ' + e.message); if (avatar.last) present(avatar.last); throw e;
+  });
+  return avatar.promise;
+}
+function updateAvatar(res) {
+  avatar.last = res;
+  const active = avatarUI.value === 'character' && avatar.root;
+  if (avatar.root) avatar.root.visible = !!active;
+  if (!active) return;
+  // Hide only the old 3D visualization. Its point calculations and the camera overlay still run.
+  for (const g of [body.group,handRig.L.group,handRig.R.group,faceGroup,neck,clavL,clavR,spine,rootJoint,chinJoint,pelvisJoint,head,...spineJoints]) g.visible = false;
+  const visible = i => res.poseWorld && (res.poseWorld[i].visibility == null || res.poseWorld[i].visibility > .5);
+  const bodyReady = ui.body.checked && res.pose && res.poseWorld && [11,12,23,24].every(visible);
+  // Solve in an unreflected world, then reflect the completed hierarchy once for Mirror.
+  avatar.root.scale.setScalar(avatar.scale);
+  for (const [name,b] of avatar.bones) { const r=avatar.rest.get(name); b.quaternion.copy(r.localQ); b.position.copy(r.localP); b.scale.copy(r.localS); }
+  if (bodyReady) avatar.root.position.copy(body.pts[23]).add(body.pts[24]).multiplyScalar(.5);
+  else avatar.root.position.set(0,-.02,0);
+  avatar.root.updateMatrixWorld(true);
+  if (bodyReady) {
+  const p = body.pts.map(canonical), hips = p[23].clone().add(p[24]).multiplyScalar(.5), chest=p[11].clone().add(p[12]).multiplyScalar(.5);
+  const restHips=restOf('L_Thigh').p.clone().add(restOf('R_Thigh').p).multiplyScalar(.5);
+  const restChest=restOf('L_Upperarm').p.clone().add(restOf('R_Upperarm').p).multiplyScalar(.5);
+  const refFrame=orientation(restOf('L_Thigh').p.clone().sub(restOf('R_Thigh').p),restChest.clone().sub(restHips));
+  applyFrame(['Hip','Pelvis'],orientation(p[23].clone().sub(p[24]),chest.clone().sub(hips)),refFrame);
+  const chestRef=orientation(restOf('L_Upperarm').p.clone().sub(restOf('R_Upperarm').p),restChest.clone().sub(restHips));
+  applyFrame(['Waist','Spine01','Spine02','NeckTwist01','NeckTwist02','Head'],orientation(p[11].clone().sub(p[12]),chest.clone().sub(hips)),chestRef);
+  for (const [s,shoulder,elbow,wrist,hip,knee,ankle,toe] of [['L',11,13,15,23,25,27,31],['R',12,14,16,24,26,28,32]]) {
+    if ([shoulder,elbow].every(visible)) aim(s+'_Upperarm',s+'_Forearm',p[shoulder],p[elbow]);
+    if ([elbow,wrist].every(visible)) aim(s+'_Forearm',s+'_Hand',p[elbow],p[wrist]);
+    if ([hip,knee].every(visible)) aim(s+'_Thigh',s+'_Calf',p[hip],p[knee]);
+    if ([knee,ankle].every(visible)) aim(s+'_Calf',s+'_Foot',p[knee],p[ankle]);
+    if ([ankle,toe].every(visible)) aim(s+'_Foot',s+'_ToeBase',p[ankle],p[toe]);
+  }
+  }
+  if (res.face && ui.face.checked) {
+    const f = i => canonical(new THREE.Vector3().fromArray(facePos,i*3));
+    const target=orientation(f(454).sub(f(234)),f(10).sub(f(152)));
+    applyFrame(['Head'],target,new THREE.Quaternion());
+  }
+  for (const h of res.hands) {
+    if (!ui.hands.checked || !h.world) continue;
+    const s=h.side, hp=handRig[s].pts.map(canonical), rr=restOf(s+'_Hand').p;
+    const target=orientation(hp[5].clone().sub(hp[17]),hp[9].clone().sub(hp[0]));
+    const ref=orientation(restOf(s+'_Index1').p.clone().sub(restOf(s+'_Pinky1').p),restOf(s+'_Mid1').p.clone().sub(rr));
+    applyFrame([s+'_Hand'],target,ref);
+    for (const [finger,start] of [['Thumb',1],['Index',5],['Mid',9],['Ring',13],['Pinky',17]]) {
+      for(let j=1;j<=3;j++) aim(s+'_'+finger+j,j<3?s+'_'+finger+(j+1):null,hp[start+j-1],hp[start+j]);
+    }
+  }
+  avatar.root.scale.x = state.mirror ? -avatar.scale : avatar.scale;
+  avatar.root.updateMatrixWorld(true); avatar.tracked=!!(bodyReady || (res.face && ui.face.checked) || (res.hands.length && ui.hands.checked));
+  avatarInfo.textContent = bodyReady ? 'Tracking body + fingers · face expressions later'
+    : avatar.tracked ? 'Head / hands tracked · show hips for body' : 'Waiting for person · face expressions later';
+}
+avatarUI.onchange = async () => {
+  if (avatarUI.value === 'character') { try { await loadAvatar(); } catch { return; } }
+  if (avatar.root) avatar.root.visible = avatarUI.value === 'character';
+  frontView();
+  if (avatar.last) present(avatar.last);
+};
+$('avatarRest').onclick = () => { stopCamera(); resetAvatar(); avatarInfo.textContent='Rest pose · start camera to track'; };
 
 // ---------------------------------------------------------------- 2D overlay
 function strokePairs(pts, pairs, W, H, ok) {
@@ -544,6 +708,7 @@ function draw2D(res) {
       const pelvis = vis(23) && vis(24) ? midPt(p[23], p[24]) : null;
       if (pelvis) line(t.root, pelvis);
       const pts = pelvis ? [t.root, t.chin, pelvis] : [t.root, t.chin];
+      if (pelvis) for (const f of SPINE_STEPS) pts.push({x:t.root.x+(pelvis.x-t.root.x)*f,y:t.root.y+(pelvis.y-t.root.y)*f});
       octx.fillStyle = CSS.body; dots(pts, pts.map((_, i) => i), W, H, 5 * s);
     }
   }
@@ -597,6 +762,7 @@ function present(res) {
   chips.body.classList.toggle('on', hasBody && ui.body.checked);
   chips.L.classList.toggle('on', seen.L); chips.R.classList.toggle('on', seen.R);
   updateBlend(res.blend, hasFace);
+  updateAvatar(res);
 }
 
 // ---------------------------------------------------------------- engine management
@@ -726,6 +892,7 @@ ui.btnView.onclick = () => {
   const puppet = document.body.classList.toggle('puppet');
   ui.btnView.textContent = puppet ? 'Camera' : 'Puppet';
   resize();
+  if (puppet && avatarUI.value === 'character' && avatar.root) frontView();
 };
 ui.btnSnap.onclick = () => {
   const W = state.W, H = state.H, c = document.createElement('canvas'); c.width = W * 2; c.height = H;
@@ -770,7 +937,7 @@ function loop() {
 }
 
 // a small handle for testing from the console
-window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
+window.mirrorPuppet = { state, present, startCamera, stopCamera, renderer, scene, camera, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
 
 loop();
 useEngine(ui.engine.value);
