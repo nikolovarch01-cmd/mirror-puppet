@@ -216,3 +216,20 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   inside the grown box or within 0.8 hand length (his open other hand got a phone before).
 - Trap for tests: OrbitControls moves `camera` back on every animation frame — set the camera and
   render in the same synchronous step, never across an `await`.
+
+## 2026-09-12, 00:30 — after his 4th live screenshot (mirror, back camera)
+
+- Phone: floated away and flickered because every detector box (an air conditioner among them) was
+  averaged into the hand's box. Now each hand takes only its nearest box that is phone-sized for that hand
+  (long side 0.8–3.2 hand lengths) and touches the palm. The phone is always anchored to the hand (palm
+  centre + 0.35 hand lengths along the palm normal), tilted with the palm, long edge = the palm axis that
+  stands more upright; the box only sets the size. Basis must be right-handed (up, side, normal) —
+  a negated axis made `setFromRotationMatrix` swap the axes (found by the harness).
+- The iPhone GLB's screen faced the viewer: the loader now checks where the `Screen` mesh sits and turns
+  the model so the back faces +z. The detector runs every 8th frame and only while a hand is in the picture
+  (his front camera showed 89 ms recognition with it at every 4th).
+- Eyes: "straight ahead" is the face-plane normal (eye→eye × jaw→eyes), which fixed pupils that looked
+  down-inward and eyeballs that sat low; gaze comes from Google's own eyeLookIn/Out/Up/Down blendshapes
+  when the engine gives them (3 models), else from the iris/corner/lid ratios.
+- Harnesses: eyes-harness sets `res.blend = null` (synthetic face has no gaze values); phone-harness uses a
+  hand-sized box and compares against the mirrored palm.

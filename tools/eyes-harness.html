@@ -46,6 +46,7 @@ function synth(st) {
   // eye corners and lids around the synthetic irises (468 right eye at cx-0.02, 473 left eye at cx+0.02)
   res.face[33]=P(cx-0.035,cy-0.015/A); res.face[133]=P(cx-0.005,cy-0.015/A); res.face[159]=P(cx-0.02,cy-0.023/A); res.face[145]=P(cx-0.02,cy-0.007/A);
   res.face[362]=P(cx+0.005,cy-0.015/A); res.face[263]=P(cx+0.035,cy-0.015/A); res.face[386]=P(cx+0.02,cy-0.023/A); res.face[374]=P(cx+0.02,cy-0.007/A);
+  res.blend = null;   // no Google gaze values in the synthetic face: the landmark path is what this test exercises
   const sel = doc.getElementById('avatarMode'); sel.value = 'character'; await sel.onchange();
   for (let i = 0; i < 400 && !mp.avatar.root; i++) await sleep(100);
   for (let i = 0; i < 20; i++) mp.present(res);
@@ -62,6 +63,8 @@ function synth(st) {
   res.face[468]=P(cx-0.02,cy-0.021/A); res.face[473]=P(cx+0.02,cy-0.021/A);
   for (let i = 0; i < 20; i++) mp.present(res);
   log('EYES looking up: pitch L', mp.eyes.pitch.L.toFixed(2), 'R', mp.eyes.pitch.R.toFixed(2), '| yaw L', mp.eyes.yaw.L.toFixed(2), '(expect pitch > 0.2, yaw ~ 0)');
+  res.face[468]=P(cx-0.02,cy-0.015/A); res.face[473]=P(cx+0.02,cy-0.015/A); for (let i = 0; i < 20; i++) mp.present(res);
+  log('EYES straight: yaw L', mp.eyes.yaw.L.toFixed(2), 'pitch L', mp.eyes.pitch.L.toFixed(2));
   const head = mp.avatar.bones.get('CC_Base_Head').getWorldPosition(new (gL.position.constructor)());
   mp.camera.position.set(head.x, head.y + 0.05, head.z + 0.42); mp.camera.lookAt(head.x, head.y + 0.05, head.z); mp.renderer.render(mp.scene, mp.camera);
   const d1 = mp.renderer.domElement.toDataURL('image/png'); await post('eyes.png', d1);

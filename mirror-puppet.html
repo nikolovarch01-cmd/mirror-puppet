@@ -590,10 +590,12 @@ const _eq = new THREE.Quaternion(), _ee = new THREE.Euler(), _em = new THREE.Mat
 function buildEyes() {
   if (eyes.L || !boneOf('L_Eye') || !boneOf('R_Eye') || !boneOf('Head')) return;
   const ipd = restOf('L_Eye').p.distanceTo(restOf('R_Eye').p), r = ipd * 0.24;   // eyeball radius, a little bigger than real, so ours show
-  const neck = restOf('NeckTwist02') || restOf('NeckTwist01') || restOf('Hip');
-  const up = restOf('Head').p.clone().sub(neck.p).normalize();
+  // the face plane: across = right eye -> left eye, up = jaw (or head) -> between the eyes; forward = its normal
   const eyeMid = restOf('L_Eye').p.clone().add(restOf('R_Eye').p).multiplyScalar(0.5);
-  const forward = eyeMid.clone().sub(restOf('Head').p); forward.addScaledVector(up, -forward.dot(up)).normalize();
+  const low = restOf('JawRoot') || restOf('Head');
+  const across = restOf('L_Eye').p.clone().sub(restOf('R_Eye').p).normalize();
+  let up = eyeMid.clone().sub(low.p); up.addScaledVector(across, -up.dot(across)).normalize();
+  const forward = new THREE.Vector3().crossVectors(across, up).normalize();   // out of the face for a right-handed (across, up, forward)
   const right = new THREE.Vector3().crossVectors(up, forward).normalize();
   const world = new THREE.Quaternion().setFromRotationMatrix(_em.makeBasis(right, up, forward));
   for (const side of ['L', 'R']) {
@@ -618,13 +620,20 @@ function gazeFrom(f) {
     L: { yaw: -(ratio(f[473].x, f[362].x, f[263].x) - 0.5) * 2.4, pitch: (0.5 - ratio(f[473].y, f[386].y, f[374].y)) * 1.6 },
   };
 }
+function gazeFromBlend(cats) {   // Google's own gaze values (eyeLookIn/Out/Up/Down per eye, 0..1)
+  const v = n => { const c = cats.find(x => x.categoryName === n); return c ? c.score : 0; };
+  return {
+    R: { yaw: (v('eyeLookOutRight') - v('eyeLookInRight')) * 0.7, pitch: (v('eyeLookUpRight') - v('eyeLookDownRight')) * 0.6 },
+    L: { yaw: (v('eyeLookInLeft') - v('eyeLookOutLeft')) * 0.7, pitch: (v('eyeLookUpLeft') - v('eyeLookDownLeft')) * 0.6 },
+  };
+}
 function updateEyes(res) {
   if (!eyes.L) buildEyes();
   if (!eyes.L) return;
   const on = !!(avatar.root && avatar.root.visible);
   eyes.L.visible = eyes.R.visible = on;
   if (!on) return;
-  const g = res && res.face && ui.face.checked ? gazeFrom(res.face) : { L: { yaw: 0, pitch: 0 }, R: { yaw: 0, pitch: 0 } };
+  const g = res && res.face && ui.face.checked ? (res.blend && res.blend.length ? gazeFromBlend(res.blend) : gazeFrom(res.face)) : { L: { yaw: 0, pitch: 0 }, R: { yaw: 0, pitch: 0 } };
   for (const side of ['L', 'R']) {
     eyes.yaw[side] += (clamp(g[side].yaw, -0.6, 0.6) - eyes.yaw[side]) * 0.5;
     eyes.pitch[side] += (clamp(g[side].pitch, -0.4, 0.4) - eyes.pitch[side]) * 0.5;
@@ -935,8 +944,8 @@ async function ensurePhoneDetector() {
   } catch (e) { console.error('phone detector failed', e); note('phone detector did not start'); }
   phone.loading = false;
 }
-function detectPhones(ts) {   // every 4th frame, only in 'auto'
-  if (!phone.det || $('optPhone').value !== 'auto' || (phone.frame % 4)) return;
+function detectPhones(ts, hands) {   // every 8th frame, only in 'auto' and only while a hand is in the picture
+  if (!phone.det || $('optPhone').value !== 'auto' || (phone.frame % 8) || !hands) return;
   try { phone.boxes = phone.det.detectForVideo(video, ts).detections.map(d => d.boundingBox); }
   catch (e) { console.warn('phone detect failed', e); phone.det = null; }
 }
@@ -952,10 +961,14 @@ async function loadPhoneModel() {
     const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
     const bytes = await bigFile(new URL('assets/phone.glb?v=1', location.href).href);
     const gltf = await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '');
-    const m = gltf.scene; m.rotation.set(0, Math.PI, 0); m.scale.setScalar(10);
+    const m = gltf.scene; m.scale.setScalar(10);
     const box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
     m.position.sub(c);                                   // centred on the phone body
     if (size.x < size.y) m.rotation.z = Math.PI / 2;      // long edge along x, whatever the file's orientation
+    // the back (cameras) must face +z: if the screen mesh sits on the +z side, turn the phone around
+    m.updateMatrixWorld(true);
+    let screen = null; m.traverse(o => { if (o.isMesh && /Screen/i.test(o.name)) screen = o; });
+    if (screen) { const sc = new THREE.Box3().setFromObject(screen).getCenter(new THREE.Vector3()), bc = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()); if (sc.z > bc.z) m.rotation.x += Math.PI; }
     phone.model = m;
     for (const side of ['L', 'R']) if (phone.meshes[side]) dressPhone(phone.meshes[side]);
   } catch (e) { console.warn('phone model failed, keeping the slab', e); }
@@ -989,19 +1002,20 @@ function holding(side) { return $('optPhone').value === side || ($('optPhone').v
 function updatePhones(res) {
   phone.frame++;
   const W = state.W, H = state.H;
-  for (const b of phone.boxes) {   // each box goes to the nearest palm that is inside the box (grown by a third) or within 0.8 hand length
+  for (const h of res.hands) {   // for each hand: the one nearest box that is phone-sized for that hand and touches the palm
+    const cx = (h.img[0].x + h.img[9].x) / 2 * W, cy = (h.img[0].y + h.img[9].y) / 2 * H, hand = Math.hypot((h.img[9].x - h.img[0].x) * W, (h.img[9].y - h.img[0].y) * H);
     let best = null;
-    for (const h of res.hands) {
-      const cx = (h.img[0].x + h.img[9].x) / 2 * W, cy = (h.img[0].y + h.img[9].y) / 2 * H, hand = Math.hypot((h.img[9].x - h.img[0].x) * W, (h.img[9].y - h.img[0].y) * H);
+    for (const b of phone.boxes) {
+      const long = Math.max(b.width, b.height); if (long < hand * 0.8 || long > hand * 3.2) continue;   // an air conditioner is not a phone
       const gx = b.width / 3, gy = b.height / 3;
       const inside = cx > b.originX - gx && cx < b.originX + b.width + gx && cy > b.originY - gy && cy < b.originY + b.height + gy;
       const d = Math.hypot(b.originX + b.width / 2 - cx, b.originY + b.height / 2 - cy);
-      if ((inside || d < hand * 0.8) && (!best || d < best.d)) best = { h, d };
+      if ((inside || d < hand * 0.8) && (!best || d < best.d)) best = { b, d };
     }
     if (!best) continue;
-    phone.seen[best.h.side] = phone.frame;
-    const o = phone.box[best.h.side];   // smoothed box
-    phone.box[best.h.side] = o ? { originX: o.originX + (b.originX - o.originX) * 0.5, originY: o.originY + (b.originY - o.originY) * 0.5, width: o.width + (b.width - o.width) * 0.5, height: o.height + (b.height - o.height) * 0.5 } : { ...b };
+    phone.seen[h.side] = phone.frame;
+    const o = phone.box[h.side], b = best.b;   // smoothed box
+    phone.box[h.side] = o ? { originX: o.originX + (b.originX - o.originX) * 0.5, originY: o.originY + (b.originY - o.originY) * 0.5, width: o.width + (b.width - o.width) * 0.5, height: o.height + (b.height - o.height) * 0.5 } : { ...b };
   }
   let any = false;
   for (const side of ['L', 'R']) {
@@ -1014,12 +1028,15 @@ function updatePhones(res) {
     } else pts = handRig[side].pts;
     const f = phoneFrame(pts); if (!f) { m.visible = false; continue; }
     const b = $('optPhone').value === 'auto' ? phone.box[side] : null;
-    if (isOverlay() && avatar.root && b) {   // where the camera saw it: box centre, box size, upright or lying, its back to the viewer
-      const portrait = b.height >= b.width, L = Math.max(b.width, b.height) / W / 1.47;
-      let x = (b.originX + b.width / 2) / W - 0.5; if (flip) x = -x;
-      let zTop = -1e9; for (const v of pts) zTop = Math.max(zTop, v.z);
-      m.position.set(x, -((b.originY + b.height / 2) / H - 0.5) * aspect(), zTop + f.L * 0.15);
-      m.quaternion.setFromAxisAngle(_pn.set(0, 0, 1), portrait ? -Math.PI / 2 : 0);   // upright: the camera island at the top
+    if (isOverlay() && avatar.root) {   // in the hand: on the palm side, tilted with the palm, upright; size from the detector's box when it has one
+      if (flip) { f.c.x *= -1; f.long.x *= -1; f.short.x *= -1; f.short.negate(); f.normal.crossVectors(f.long, f.short); }
+      const L = b ? Math.max(b.width, b.height) / W / 1.47 : f.L;
+      // the phone's long edge is whichever palm axis stands more upright on the screen, pointing up
+      const up = Math.abs(f.long.y) >= Math.abs(f.short.y) ? f.long.clone() : f.short.clone(); if (up.y < 0) up.negate();
+      const side = new THREE.Vector3().crossVectors(f.normal, up).normalize(); up.crossVectors(side, f.normal).normalize();
+      m.position.copy(f.c).addScaledVector(f.normal, f.L * 0.35);
+      _pm.makeBasis(up, side, f.normal); m.quaternion.setFromRotationMatrix(_pm);   // right-handed: x = long edge (up), y = side, z = back towards the viewer
+      phone.debug = { long: f.long.toArray(), short: f.short.toArray(), up: up.toArray(), normal: f.normal.toArray(), L, flip };
       m.scale.setScalar(L);
     } else {
       if (flip) { f.c.x *= -1; f.long.x *= -1; f.short.x *= -1; f.short.negate(); f.normal.crossVectors(f.long, f.short); }   // reflected, still right-handed
@@ -1334,7 +1351,7 @@ function loop() {
     let res = null;
     const t0 = performance.now();
     try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
-    if (res) detectPhones(ts);
+    if (res) detectPhones(ts, res.hands.length);
     const t1 = performance.now();
     if (res) { try { present(res); frames++; } catch (e) { console.error('present failed', e); note('draw error: ' + String((e && e.message) || e).slice(0, 80)); } }
     const t2 = performance.now();
