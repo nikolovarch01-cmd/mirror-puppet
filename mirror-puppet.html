@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="bg">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Огледална кукла</title>
+<title>Mirror Puppet</title>
 <style>
 :root{--bg:#0f1317;--panel:#161c22;--line:#2a333d;--text:#e6edf3;--muted:#8b9aab;--acc:#5ec8ff;--left:#4fd8ff;--right:#ffb347;--body:#9be29b;--face:#a9d3ff}
 *{box-sizing:border-box}
@@ -21,9 +21,10 @@ button.primary{background:var(--acc);color:#04121c;border-color:transparent;font
 main{flex:1;display:flex;min-height:0;position:relative}
 .pane{flex:1;position:relative;min-width:0;min-height:0;background:#000;overflow:hidden}
 .pane+.pane{border-left:1px solid var(--line)}
-#cam video,#cam canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-body.mirror #cam video,body.mirror #cam canvas{transform:scaleX(-1)}
-body.novideo #cam video{visibility:hidden}
+.picture{position:absolute;inset:0}
+.picture video,.picture canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+body.mirror .picture video,body.mirror .picture canvas{transform:scaleX(-1)}
+body.novideo .picture video{visibility:hidden}
 #view3d canvas{display:block}
 .chips{position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap}
 .chip{padding:2px 8px;border-radius:999px;font-size:12px;background:rgba(15,19,23,.7);color:var(--muted);border:1px solid var(--line)}
@@ -44,7 +45,6 @@ body.novideo #cam video{visibility:hidden}
 #loading .row{margin-top:12px;display:flex;gap:8px;justify-content:center}
 #loading small{color:var(--muted);word-break:break-word}
 .tools{display:contents}.only-phone{display:none}
-#expr h2{cursor:pointer}
 @media (max-width:760px){
   body{height:100dvh}
   header{gap:6px 8px;padding:6px 8px}
@@ -54,55 +54,56 @@ body.novideo #cam video{visibility:hidden}
   header.open .tools{display:flex}
   #status{margin-left:0;width:100%;font-size:12px;white-space:normal}
   main{flex-direction:column}
-  #cam{flex:0 0 58%}
-  #view3d{flex:1 1 auto}
-  .pane+.pane{border-left:0;border-top:1px solid var(--line)}
-  #cam video,#cam canvas{object-fit:cover}
-  #expr{left:8px;right:8px;bottom:8px;width:auto;padding:5px 8px}
-  #expr h2{margin:0}
-  #expr.open h2{margin-bottom:6px}
-  #expr:not(.open) .bs{display:none}
+  .pane+.pane{border-left:0}
+  body.puppet #cam{display:none}
+  body:not(.puppet) #view3d{display:none}
+  #cam{display:flex;flex-direction:column;overflow:auto}
+  .picture{position:relative;inset:auto;width:100%;flex:0 0 auto;aspect-ratio:var(--ar,16/9);max-height:72%}
+  #expr{position:static;width:auto;margin:8px;flex:0 0 auto}
   #hint{display:none}
 }
 </style>
 </head>
 <body class="mirror">
 <header>
-  <h1>Огледална кукла</h1>
-  <button id="btnCam" class="primary">Пусни камерата</button>
-  <button id="btnTools" class="only-phone">Настройки</button>
+  <h1>Mirror Puppet</h1>
+  <button id="btnCam" class="primary">Start camera</button>
+  <button id="btnView" class="only-phone">Puppet</button>
+  <button id="btnTools" class="only-phone">Settings</button>
   <div class="tools">
-  <select id="camSel" title="Коя камера" hidden></select>
-  <label><input type="checkbox" id="optFace" checked> Лице</label>
-  <label><input type="checkbox" id="optHands" checked> Ръце</label>
-  <label><input type="checkbox" id="optBody" checked> Тяло</label>
-  <label><input type="checkbox" id="optMesh" checked> Мрежа</label>
-  <label><input type="checkbox" id="optMirror" checked> Огледало</label>
-  <label><input type="checkbox" id="optVideo" checked> Видео</label>
-  <label>Плавност <input type="range" id="optSmooth" min="0" max="90" value="50"></label>
-  <label>Двигател <select id="optEngine">
-    <option value="auto">автоматично</option>
-    <option value="sep:GPU">три модела · видеокарта</option>
-    <option value="holistic:GPU">общ модел · видеокарта</option>
-    <option value="sep:CPU">три модела · процесор</option>
-    <option value="holistic:CPU">общ модел · процесор</option>
+  <select id="camSel" title="Which camera" hidden></select>
+  <label><input type="checkbox" id="optFace" checked> Face</label>
+  <label><input type="checkbox" id="optHands" checked> Hands</label>
+  <label><input type="checkbox" id="optBody" checked> Body</label>
+  <label><input type="checkbox" id="optMesh" checked> Mesh</label>
+  <label><input type="checkbox" id="optMirror" checked> Mirror</label>
+  <label><input type="checkbox" id="optVideo" checked> Video</label>
+  <label>Smoothing <input type="range" id="optSmooth" min="0" max="90" value="50"></label>
+  <label>Engine <select id="optEngine">
+    <option value="auto">automatic</option>
+    <option value="sep:GPU">3 models · GPU</option>
+    <option value="holistic:GPU">combined · GPU</option>
+    <option value="sep:CPU">3 models · CPU</option>
+    <option value="holistic:CPU">combined · CPU</option>
   </select></label>
-  <button id="btnSnap" title="Записва картинка от двата панела">Снимка</button>
+  <button id="btnSnap" title="Saves a picture of both views">Snapshot</button>
   </div>
-  <span id="status">зареждам…</span>
+  <span id="status">loading…</span>
 </header>
 <main>
   <section class="pane" id="cam">
-    <video id="video" autoplay muted playsinline webkit-playsinline></video>
-    <canvas id="overlay" width="640" height="480"></canvas>
-    <div class="chips"><span class="chip face" id="chipFace">лице</span><span class="chip body" id="chipBody">тяло</span><span class="chip left" id="chipL">лява ръка</span><span class="chip right" id="chipR">дясна ръка</span></div>
-    <div id="expr"><h2 id="exprTitle">Физиономия</h2><div id="bsList"></div></div>
+    <div class="picture">
+      <video id="video" autoplay muted playsinline webkit-playsinline></video>
+      <canvas id="overlay" width="640" height="480"></canvas>
+      <div class="chips"><span class="chip face" id="chipFace">face</span><span class="chip body" id="chipBody">body</span><span class="chip left" id="chipL">left hand</span><span class="chip right" id="chipR">right hand</span></div>
+    </div>
+    <div id="expr"><h2 id="exprTitle">Expression</h2><div id="bsList"></div></div>
   </section>
   <section class="pane" id="view3d">
-    <button id="front">Отпред</button>
-    <div id="hint">влачи, за да завъртиш · колелце за приближаване</div>
+    <button id="front">Front view</button>
+    <div id="hint">drag to rotate · wheel to zoom</div>
   </section>
-  <div id="loading"><div class="box">Зареждам моделите за разпознаване…<br><small>около 35 MB, само първия път</small></div></div>
+  <div id="loading"><div class="box">Loading the recognition models…<br><small>about 35 MB, first time only</small></div></div>
 </main>
 
 <script type="importmap">
@@ -143,24 +144,24 @@ const FACE_TESS = FaceLandmarker.FACE_LANDMARKS_TESSELATION.map(c => [c.start, c
 const FACE_CONT = [...FaceLandmarker.FACE_LANDMARKS_CONTOURS, ...FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, ...FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS].map(c => [c.start, c.end]);
 const COLOR = { face: 0xa9d3ff, faceLine: 0x6f9cc8, body: 0x9be29b, L: 0x4fd8ff, R: 0xffb347 };
 const CSS = { face: '#a9d3ff', faceLine: 'rgba(111,156,200,0.45)', body: '#9be29b', L: '#4fd8ff', R: '#ffb347' };
-const BS_BG = {
-  browDownLeft: 'вежда надолу (ляво)', browDownRight: 'вежда надолу (дясно)', browInnerUp: 'вежди нагоре (вътре)',
-  browOuterUpLeft: 'вежда нагоре (ляво)', browOuterUpRight: 'вежда нагоре (дясно)', cheekPuff: 'надути бузи',
-  cheekSquintLeft: 'присвита буза (ляво)', cheekSquintRight: 'присвита буза (дясно)', eyeBlinkLeft: 'мигане (ляво)',
-  eyeBlinkRight: 'мигане (дясно)', eyeLookDownLeft: 'поглед надолу (ляво)', eyeLookDownRight: 'поглед надолу (дясно)',
-  eyeLookInLeft: 'поглед навътре (ляво)', eyeLookInRight: 'поглед навътре (дясно)', eyeLookOutLeft: 'поглед навън (ляво)',
-  eyeLookOutRight: 'поглед навън (дясно)', eyeLookUpLeft: 'поглед нагоре (ляво)', eyeLookUpRight: 'поглед нагоре (дясно)',
-  eyeSquintLeft: 'присвито око (ляво)', eyeSquintRight: 'присвито око (дясно)', eyeWideLeft: 'ококорено око (ляво)',
-  eyeWideRight: 'ококорено око (дясно)', jawForward: 'челюст напред', jawLeft: 'челюст наляво', jawOpen: 'отворена уста',
-  jawRight: 'челюст надясно', mouthClose: 'затворена уста', mouthDimpleLeft: 'трапчинка (ляво)', mouthDimpleRight: 'трапчинка (дясно)',
-  mouthFrownLeft: 'намръщена уста (ляво)', mouthFrownRight: 'намръщена уста (дясно)', mouthFunnel: 'уста фуния',
-  mouthLeft: 'уста наляво', mouthLowerDownLeft: 'долна устна надолу (ляво)', mouthLowerDownRight: 'долна устна надолу (дясно)',
-  mouthPressLeft: 'стиснати устни (ляво)', mouthPressRight: 'стиснати устни (дясно)', mouthPucker: 'нацупена уста',
-  mouthRight: 'уста надясно', mouthRollLower: 'прибрана долна устна', mouthRollUpper: 'прибрана горна устна',
-  mouthShrugLower: 'повдигната долна устна', mouthShrugUpper: 'повдигната горна устна', mouthSmileLeft: 'усмивка (ляво)',
-  mouthSmileRight: 'усмивка (дясно)', mouthStretchLeft: 'разтегната уста (ляво)', mouthStretchRight: 'разтегната уста (дясно)',
-  mouthUpperUpLeft: 'горна устна нагоре (ляво)', mouthUpperUpRight: 'горна устна нагоре (дясно)', noseSneerLeft: 'сбръчкан нос (ляво)',
-  noseSneerRight: 'сбръчкан нос (дясно)', tongueOut: 'език навън',
+const BS_NAME = {
+  browDownLeft: 'brow down (left)', browDownRight: 'brow down (right)', browInnerUp: 'brows up (inner)',
+  browOuterUpLeft: 'brow up (left)', browOuterUpRight: 'brow up (right)', cheekPuff: 'cheeks puffed',
+  cheekSquintLeft: 'cheek squint (left)', cheekSquintRight: 'cheek squint (right)', eyeBlinkLeft: 'blink (left)',
+  eyeBlinkRight: 'blink (right)', eyeLookDownLeft: 'look down (left)', eyeLookDownRight: 'look down (right)',
+  eyeLookInLeft: 'look in (left)', eyeLookInRight: 'look in (right)', eyeLookOutLeft: 'look out (left)',
+  eyeLookOutRight: 'look out (right)', eyeLookUpLeft: 'look up (left)', eyeLookUpRight: 'look up (right)',
+  eyeSquintLeft: 'eye squint (left)', eyeSquintRight: 'eye squint (right)', eyeWideLeft: 'eye wide (left)',
+  eyeWideRight: 'eye wide (right)', jawForward: 'jaw forward', jawLeft: 'jaw left', jawOpen: 'mouth open',
+  jawRight: 'jaw right', mouthClose: 'mouth closed', mouthDimpleLeft: 'dimple (left)', mouthDimpleRight: 'dimple (right)',
+  mouthFrownLeft: 'frown (left)', mouthFrownRight: 'frown (right)', mouthFunnel: 'mouth funnel',
+  mouthLeft: 'mouth left', mouthLowerDownLeft: 'lower lip down (left)', mouthLowerDownRight: 'lower lip down (right)',
+  mouthPressLeft: 'lips pressed (left)', mouthPressRight: 'lips pressed (right)', mouthPucker: 'pucker',
+  mouthRight: 'mouth right', mouthRollLower: 'lower lip rolled in', mouthRollUpper: 'upper lip rolled in',
+  mouthShrugLower: 'lower lip up', mouthShrugUpper: 'upper lip up', mouthSmileLeft: 'smile (left)',
+  mouthSmileRight: 'smile (right)', mouthStretchLeft: 'mouth stretch (left)', mouthStretchRight: 'mouth stretch (right)',
+  mouthUpperUpLeft: 'upper lip up (left)', mouthUpperUpRight: 'upper lip up (right)', noseSneerLeft: 'nose sneer (left)',
+  noseSneerRight: 'nose sneer (right)', tongueOut: 'tongue out',
 };
 
 // ---------------------------------------------------------------- dom / state
@@ -168,15 +169,12 @@ const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('overlay'), octx = overlay.getContext('2d');
 const ui = { face: $('optFace'), hands: $('optHands'), body: $('optBody'), mesh: $('optMesh'), mirror: $('optMirror'),
   video: $('optVideo'), smooth: $('optSmooth'), engine: $('optEngine'), camSel: $('camSel'), status: $('status'),
-  btnCam: $('btnCam'), btnSnap: $('btnSnap'), loading: $('loading'), exprTitle: $('exprTitle') };
+  btnCam: $('btnCam'), btnSnap: $('btnSnap'), btnView: $('btnView'), loading: $('loading'), exprTitle: $('exprTitle') };
 const chips = { face: $('chipFace'), body: $('chipBody'), L: $('chipL'), R: $('chipR') };
-const PHONE = window.matchMedia('(max-width: 760px)');
-$('btnTools').onclick = () => document.querySelector('header').classList.toggle('open');
-$('exprTitle').onclick = () => $('expr').classList.toggle('open');
 const state = { W: 640, H: 480, mirror: true, running: false, note: '', noteAt: 0 };
 function note(msg) { state.note = msg; state.noteAt = performance.now(); setStatus(); }
-window.addEventListener('error', ev => note('грешка: ' + String(ev.message || ev.error || '').slice(0, 120)));
-window.addEventListener('unhandledrejection', ev => note('грешка: ' + String((ev.reason && ev.reason.message) || ev.reason || '').slice(0, 120)));
+window.addEventListener('error', ev => note('error: ' + String(ev.message || ev.error || '').slice(0, 120)));
+window.addEventListener('unhandledrejection', ev => note('error: ' + String((ev.reason && ev.reason.message) || ev.reason || '').slice(0, 120)));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const aspect = () => state.H / state.W;                       // image y (0..1) -> width units: y * aspect
 const dImg = (a, b) => Math.hypot(a.x - b.x, (a.y - b.y) * aspect());
@@ -190,14 +188,13 @@ async function getFileset() { return fileset || (fileset = await FilesetResolver
 async function createBackend(key) {
   const [kind, delegate] = key.split(':');
   const fs = await getFileset();
-  const where = delegate === 'GPU' ? 'видеокарта' : 'процесор';
   if (kind === 'holistic') {
-    // On the video card the expression part of the combined model fails ("No support of const"),
+    // On the GPU the expression part of the combined model fails ("No support of const"),
     // so there the expressions are switched off; the face mesh itself still follows the face.
     const lm = await HolisticLandmarker.createFromOptions(fs, {
       baseOptions: { modelAssetPath: MODEL.holistic, delegate }, runningMode: 'VIDEO', outputFaceBlendshapes: delegate !== 'GPU' });
     return {
-      key, label: 'общ модел · ' + where,
+      key, label: 'combined · ' + delegate,
       detect(v, ts) {
         const r = lm.detectForVideo(v, ts);
         const hands = [];
@@ -221,7 +218,7 @@ async function createBackend(key) {
     PoseLandmarker.createFromOptions(fs, { ...base(MODEL.pose), numPoses: 1 }),
   ]);
   return {
-    key, label: 'три модела · ' + where,
+    key, label: '3 models · ' + delegate,
     detect(v, ts) {
       const out = { face: null, blend: null, pose: null, poseWorld: null, hands: [] };
       if (ui.face.checked) {
@@ -272,9 +269,10 @@ function assignHands(hands, pose) {
 
 // ---------------------------------------------------------------- 3D scene
 const view = $('view3d');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: !IS_MOBILE });
+renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio || 1, 2));
 view.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost', () => note('the 3D view lost its graphics context (low memory) - reload the page'));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1317);
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 30);
@@ -439,6 +437,13 @@ function draw2D(res) {
     const p = res.pose, vis = i => (p[i].visibility == null || p[i].visibility > 0.5);
     octx.strokeStyle = CSS.body; octx.lineWidth = 3 * s;
     strokePairs(p, BODY_BONES, W, H, (a, b) => vis(a) && vis(b));
+    // the neck: from between the shoulders up to the chin (or to just under the mouth when there is no face mesh)
+    if (vis(11) && vis(12)) {
+      const top = res.face ? res.face[152] : { x: (p[9].x + p[10].x) / 2, y: (p[9].y + p[10].y) / 2 + 0.03 };
+      octx.beginPath();
+      octx.moveTo((p[11].x + p[12].x) / 2 * W, (p[11].y + p[12].y) / 2 * H); octx.lineTo(top.x * W, top.y * H);
+      octx.stroke();
+    }
     octx.fillStyle = CSS.body; dots(p, BODY_JOINTS, W, H, 5 * s, vis);
   }
   for (const h of res.hands) {
@@ -464,15 +469,14 @@ let bsAt = 0;
 function updateBlend(cats, hasFace) {
   const now = performance.now(); if (now - bsAt < 120) return; bsAt = now;
   if (!cats || !cats.length) {
-    ui.exprTitle.textContent = hasFace ? 'Физиономия · няма при общ модел на видеокарта' : 'Физиономия · няма лице';
+    ui.exprTitle.textContent = hasFace ? 'Expression · not available with combined · GPU' : 'Expression · no face';
     bsRows.forEach(r => r.row.style.display = 'none'); return;
   }
+  ui.exprTitle.textContent = 'Expression';
   const top = cats.filter(c => c.categoryName !== '_neutral').sort((a, b) => b.score - a.score).slice(0, bsRows.length);
-  const compact = PHONE.matches && !$('expr').classList.contains('open');
-  ui.exprTitle.textContent = compact && top[0] ? 'Физиономия: ' + (BS_BG[top[0].categoryName] || top[0].categoryName) + ' ' + Math.round(top[0].score * 100) + '%' : 'Физиономия';
   bsRows.forEach((r, i) => {
     const c = top[i]; if (!c) { r.row.style.display = 'none'; return; }
-    r.row.style.display = ''; r.n.textContent = BS_BG[c.categoryName] || c.categoryName;
+    r.row.style.display = ''; r.n.textContent = BS_NAME[c.categoryName] || c.categoryName;
     const pct = Math.round(c.score * 100); r.v.textContent = pct + '%'; r.b.style.width = pct + '%';
   });
 }
@@ -493,7 +497,7 @@ function present(res) {
 }
 
 // ---------------------------------------------------------------- engine management
-const CHAIN = ['sep:GPU', 'sep:CPU', 'holistic:CPU'];   // what "автоматично" tries, in order
+const CHAIN = ['sep:GPU', 'sep:CPU', 'holistic:CPU'];   // what "automatic" tries, in order
 let backend = null, chainPos = 0, wanted = null;
 function showLoading(html, kind) {
   ui.loading.dataset.kind = kind || 'loading';
@@ -508,13 +512,13 @@ function showCard(title, reason, buttons) {
 }
 function showError(title, e) {
   const reason = String((e && e.message) || e || '').split('===')[0].replace(/\s+/g, ' ').trim().slice(0, 160);
-  showCard(title, reason, [{ label: 'Върни автоматично', primary: true, onClick: () => { ui.engine.value = 'auto'; chainPos = 0; useEngine('auto'); } }, { label: 'Затвори' }]);
+  showCard(title, reason, [{ label: 'Back to automatic', primary: true, onClick: () => { ui.engine.value = 'auto'; chainPos = 0; useEngine('auto'); } }, { label: 'Close' }]);
 }
 async function useEngine(sel) {
   const key = sel === 'auto' ? CHAIN[chainPos] : sel;
   if (backend && backend.key === key) { ui.loading.classList.add('hidden'); return; }
   wanted = key;
-  showLoading('Зареждам моделите за разпознаване…<br><small>около 35 MB, само първия път</small>');
+  showLoading('Loading the recognition models…<br><small>about 35 MB, first time only</small>');
   const old = backend; backend = null; if (old) old.close();
   try {
     const b = await createBackend(key);
@@ -523,14 +527,14 @@ async function useEngine(sel) {
   } catch (e) {
     console.error('engine failed', key, e);
     if (sel === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; return useEngine('auto'); }
-    wanted = null; showError('Този двигател не тръгна', e); setStatus();
+    wanted = null; showError('This engine did not start', e); setStatus();
   }
 }
 function onDetectError(e) {
   console.error('detect failed', backend && backend.key, e);
   const old = backend; backend = null; if (old) try { old.close(); } catch {}
   if (ui.engine.value === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; useEngine('auto'); }
-  else { showError('Разпознаването спря', e); setStatus(); }
+  else { showError('Recognition stopped', e); setStatus(); }
 }
 ui.engine.onchange = () => { chainPos = 0; useEngine(ui.engine.value); };
 
@@ -540,10 +544,10 @@ window.addEventListener('orientationchange', () => { if (IS_MOBILE && state.runn
 async function startCamera(deviceId) {
   stopCamera();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus('камерата работи само от файл на компютъра или от https адрес'); return;
+    note('the camera works only from a file on this computer or from an https address'); return;
   }
-  const portrait = IS_MOBILE && window.innerHeight > window.innerWidth;
-  const size = portrait ? { width: { ideal: 720 }, height: { ideal: 1280 } } : { width: { ideal: 1280 }, height: { ideal: 720 } };
+  // a phone gets a 4:3 picture (taller on its screen); a computer the usual 16:9
+  const size = IS_MOBILE ? { width: { ideal: 1280 }, height: { ideal: 960 } } : { width: { ideal: 1280 }, height: { ideal: 720 } };
   currentDeviceId = deviceId;
   const pick = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' };
   let last = null;
@@ -552,29 +556,29 @@ async function startCamera(deviceId) {
     catch (e) { last = e; if (e.name === 'NotAllowedError' || e.name === 'SecurityError') break; }
   }
   if (!stream) {
-    const why = { NotAllowedError: 'не е разрешена камера за тази страница', NotFoundError: 'не се намира камера',
-      NotReadableError: 'камерата е заета от друга програма', SecurityError: 'страницата не е на сигурен адрес' }[last && last.name]
-      || (last ? last.name + ': ' + last.message : 'неизвестна причина');
-    note('камерата не тръгна: ' + why);
-    showCard('Камерата не тръгна', why, [{ label: 'Опитай пак', primary: true, onClick: () => startCamera(deviceId) }, { label: 'Затвори' }]);
+    const why = { NotAllowedError: 'camera access was not allowed for this page', NotFoundError: 'no camera found',
+      NotReadableError: 'the camera is in use by another app', SecurityError: 'the page is not on a secure address' }[last && last.name]
+      || (last ? last.name + ': ' + last.message : 'unknown reason');
+    note('camera did not start: ' + why);
+    showCard('The camera did not start', why, [{ label: 'Try again', primary: true, onClick: () => startCamera(deviceId) }, { label: 'Close' }]);
     return;
   }
   video.srcObject = stream;
   try { await video.play(); }
-  catch (e) { showCard('Докосни, за да тръгне камерата', '', [{ label: 'Пусни', primary: true, onClick: () => video.play().catch(err => note('камерата не тръгна: ' + err.name)) }]); }
-  state.running = true; ui.btnCam.textContent = 'Спри камерата'; resetSmoothing(); setStatus();
+  catch (e) { showCard('Tap to start the camera', '', [{ label: 'Start', primary: true, onClick: () => video.play().catch(err => note('camera did not start: ' + err.name)) }]); }
+  state.running = true; ui.btnCam.textContent = 'Stop camera'; resetSmoothing(); setStatus();
   listCameras();
 }
 function stopCamera() {
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  video.srcObject = null; state.running = false; ui.btnCam.textContent = 'Пусни камерата'; setStatus();
+  video.srcObject = null; state.running = false; ui.btnCam.textContent = 'Start camera'; setStatus();
 }
 async function listCameras() {
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
     if (devs.length < 2) return;
     ui.camSel.innerHTML = '';
-    devs.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('камера ' + (i + 1)); ui.camSel.appendChild(o); });
+    devs.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('camera ' + (i + 1)); ui.camSel.appendChild(o); });
     const cur = stream && stream.getVideoTracks()[0].getSettings().deviceId;
     if (cur) ui.camSel.value = cur;
     ui.camSel.hidden = false;
@@ -584,7 +588,9 @@ async function listCameras() {
 function syncSize() {
   if (!video.videoWidth || (video.videoWidth === state.W && video.videoHeight === state.H)) return;
   state.W = video.videoWidth; state.H = video.videoHeight;
-  overlay.width = state.W; overlay.height = state.H; resetSmoothing(); setStatus();
+  overlay.width = state.W; overlay.height = state.H;
+  document.documentElement.style.setProperty('--ar', state.W + ' / ' + state.H);   // the phone layout sizes the picture box by it
+  resetSmoothing(); setStatus();
 }
 video.addEventListener('loadedmetadata', syncSize);
 video.addEventListener('resize', syncSize);
@@ -595,6 +601,13 @@ ui.btnCam.onclick = () => state.running ? stopCamera() : startCamera(ui.camSel.h
 ui.mirror.onchange = () => { state.mirror = ui.mirror.checked; document.body.classList.toggle('mirror', state.mirror); resetSmoothing(); };
 ui.video.onchange = () => document.body.classList.toggle('novideo', !ui.video.checked);
 $('front').onclick = frontView;
+$('btnTools').onclick = () => document.querySelector('header').classList.toggle('open');
+// On a phone there is one view at a time: the camera picture or the puppet
+ui.btnView.onclick = () => {
+  const puppet = document.body.classList.toggle('puppet');
+  ui.btnView.textContent = puppet ? 'Camera' : 'Puppet';
+  resize();
+};
 ui.btnSnap.onclick = () => {
   const W = state.W, H = state.H, c = document.createElement('canvas'); c.width = W * 2; c.height = H;
   const g = c.getContext('2d'); g.fillStyle = '#0f1317'; g.fillRect(0, 0, c.width, c.height);
@@ -605,7 +618,7 @@ ui.btnSnap.onclick = () => {
   const t = renderer.domElement, f = Math.min(W / t.width, H / t.height), tw = t.width * f, th = t.height * f;
   g.drawImage(t, W + (W - tw) / 2, (H - th) / 2, tw, th);
   const a = document.createElement('a');
-  a.download = 'kukla-' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.png';
+  a.download = 'mirror-puppet-' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.png';
   a.href = c.toDataURL('image/png'); a.click();
 };
 function resize() {
@@ -617,8 +630,8 @@ new ResizeObserver(resize).observe(view); resize();
 // ---------------------------------------------------------------- loop
 let fps = 0, frames = 0, fpsAt = performance.now(), lastVT = -1, lastTs = 0;
 function setStatus(msg) {
-  const engine = backend ? backend.label : (wanted ? 'зареждам модел' : 'без двигател · избери от менюто');
-  const parts = [engine, state.running ? fps + ' к/с' : 'камерата е спряна', state.W + '×' + state.H];
+  const engine = backend ? backend.label : (wanted ? 'loading model' : 'no engine · pick one in the menu');
+  const parts = [engine, state.running ? fps + ' fps' : 'camera off', state.W + '×' + state.H];
   if (state.note && performance.now() - state.noteAt < 15000) parts.push(state.note);
   ui.status.textContent = msg || parts.join(' · ');
 }
@@ -634,7 +647,7 @@ function loop() {
   const now = performance.now();
   if (now - fpsAt >= 1000) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; setStatus(); }
   controls.update();
-  renderer.render(scene, camera);
+  if (view.clientWidth && view.clientHeight) renderer.render(scene, camera);
 }
 
 // a small handle for testing from the console
