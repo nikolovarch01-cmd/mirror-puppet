@@ -71,6 +71,7 @@ body.novideo .picture video{visibility:hidden}
   <h1>Mirror Puppet</h1>
   <button id="btnCam" class="primary">Start camera</button>
   <button id="btnView" class="only-phone">Puppet</button>
+  <button id="btnFlip" class="only-phone" title="Front / back camera">Flip</button>
   <button id="btnTools" class="only-phone">Settings</button>
   <div class="tools">
   <select id="camSel" title="Which camera" hidden></select>
@@ -171,7 +172,7 @@ const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('overlay'), octx = overlay.getContext('2d');
 const ui = { face: $('optFace'), hands: $('optHands'), body: $('optBody'), mesh: $('optMesh'), mirror: $('optMirror'),
   video: $('optVideo'), smooth: $('optSmooth'), engine: $('optEngine'), camSel: $('camSel'), status: $('status'),
-  btnCam: $('btnCam'), btnSnap: $('btnSnap'), btnView: $('btnView'), loading: $('loading'), exprTitle: $('exprTitle') };
+  btnCam: $('btnCam'), btnSnap: $('btnSnap'), btnView: $('btnView'), btnFlip: $('btnFlip'), loading: $('loading'), exprTitle: $('exprTitle') };
 const chips = { face: $('chipFace'), body: $('chipBody'), L: $('chipL'), R: $('chipR') };
 const state = { W: 640, H: 480, mirror: true, running: false, note: '', noteAt: 0 };
 function note(msg) { state.note = msg; state.noteAt = performance.now(); setStatus(); }
@@ -591,9 +592,9 @@ function onDetectError(e) {
 ui.engine.onchange = () => { chainPos = 0; useEngine(ui.engine.value); };
 
 // ---------------------------------------------------------------- camera
-let stream = null, currentDeviceId = undefined;
+let stream = null, currentDeviceId = undefined, currentFacing = 'user';
 window.addEventListener('orientationchange', () => { if (IS_MOBILE && state.running) setTimeout(() => startCamera(currentDeviceId), 400); });
-async function startCamera(deviceId) {
+async function startCamera(deviceId, facing) {
   stopCamera();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     note('the camera works only from a file on this computer or from an https address'); return;
@@ -601,7 +602,7 @@ async function startCamera(deviceId) {
   // a phone gets a 4:3 picture (taller on its screen); a computer the usual 16:9
   const size = IS_MOBILE ? { width: { ideal: 1280 }, height: { ideal: 960 } } : { width: { ideal: 1280 }, height: { ideal: 720 } };
   currentDeviceId = deviceId;
-  const pick = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' };
+  const pick = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: facing || currentFacing };
   let last = null;
   for (const c of [{ audio: false, video: { ...pick, ...size } }, { audio: false, video: pick }, { audio: false, video: true }]) {
     try { stream = await navigator.mediaDevices.getUserMedia(c); last = null; break; }
@@ -615,6 +616,11 @@ async function startCamera(deviceId) {
     showCard('The camera did not start', why, [{ label: 'Try again', primary: true, onClick: () => startCamera(deviceId) }, { label: 'Close' }]);
     return;
   }
+  // a front camera shows a reflection, a back camera shows the world as it is
+  const track = stream.getVideoTracks()[0], st = track.getSettings ? track.getSettings() : {};
+  const back = st.facingMode === 'environment' || (!st.facingMode && /back|rear|environment/i.test(track.label || ''));
+  currentFacing = back ? 'environment' : 'user';
+  setMirror(!back);
   video.srcObject = stream;
   try { await video.play(); }
   catch (e) { showCard('Tap to start the camera', '', [{ label: 'Start', primary: true, onClick: () => video.play().catch(err => note('camera did not start: ' + err.name)) }]); }
@@ -650,7 +656,9 @@ ui.camSel.onchange = () => startCamera(ui.camSel.value);
 ui.btnCam.onclick = () => state.running ? stopCamera() : startCamera(ui.camSel.hidden ? undefined : ui.camSel.value);
 
 // ---------------------------------------------------------------- controls
-ui.mirror.onchange = () => { state.mirror = ui.mirror.checked; document.body.classList.toggle('mirror', state.mirror); resetSmoothing(); };
+function setMirror(on) { ui.mirror.checked = on; state.mirror = on; document.body.classList.toggle('mirror', on); resetSmoothing(); }
+ui.mirror.onchange = () => setMirror(ui.mirror.checked);
+ui.btnFlip.onclick = () => startCamera(undefined, currentFacing === 'user' ? 'environment' : 'user');
 ui.video.onchange = () => document.body.classList.toggle('novideo', !ui.video.checked);
 $('front').onclick = frontView;
 $('btnTools').onclick = () => document.querySelector('header').classList.toggle('open');
