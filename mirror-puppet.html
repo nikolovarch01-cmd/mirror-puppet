@@ -43,13 +43,35 @@ body.novideo #cam video{visibility:hidden}
 #loading .box{max-width:640px}
 #loading .row{margin-top:12px;display:flex;gap:8px;justify-content:center}
 #loading small{color:var(--muted);word-break:break-word}
-@media (max-width:760px){main{flex-direction:column}.pane+.pane{border-left:0;border-top:1px solid var(--line)}#expr{width:200px}header{gap:4px 8px;padding:6px 8px}header h1{display:none}#status{margin-left:0;width:100%}}
+.tools{display:contents}.only-phone{display:none}
+#expr h2{cursor:pointer}
+@media (max-width:760px){
+  body{height:100dvh}
+  header{gap:6px 8px;padding:6px 8px}
+  header h1{display:none}
+  .only-phone{display:inline-block}
+  .tools{display:none;width:100%;flex-wrap:wrap;gap:6px 10px;padding-top:4px}
+  header.open .tools{display:flex}
+  #status{margin-left:0;width:100%;font-size:12px;white-space:normal}
+  main{flex-direction:column}
+  #cam{flex:0 0 58%}
+  #view3d{flex:1 1 auto}
+  .pane+.pane{border-left:0;border-top:1px solid var(--line)}
+  #cam video,#cam canvas{object-fit:cover}
+  #expr{left:8px;right:8px;bottom:8px;width:auto;padding:5px 8px}
+  #expr h2{margin:0}
+  #expr.open h2{margin-bottom:6px}
+  #expr:not(.open) .bs{display:none}
+  #hint{display:none}
+}
 </style>
 </head>
 <body class="mirror">
 <header>
   <h1>Огледална кукла</h1>
   <button id="btnCam" class="primary">Пусни камерата</button>
+  <button id="btnTools" class="only-phone">Настройки</button>
+  <div class="tools">
   <select id="camSel" title="Коя камера" hidden></select>
   <label><input type="checkbox" id="optFace" checked> Лице</label>
   <label><input type="checkbox" id="optHands" checked> Ръце</label>
@@ -66,11 +88,12 @@ body.novideo #cam video{visibility:hidden}
     <option value="holistic:CPU">общ модел · процесор</option>
   </select></label>
   <button id="btnSnap" title="Записва картинка от двата панела">Снимка</button>
+  </div>
   <span id="status">зареждам…</span>
 </header>
 <main>
   <section class="pane" id="cam">
-    <video id="video" autoplay muted playsinline></video>
+    <video id="video" autoplay muted playsinline webkit-playsinline></video>
     <canvas id="overlay" width="640" height="480"></canvas>
     <div class="chips"><span class="chip face" id="chipFace">лице</span><span class="chip body" id="chipBody">тяло</span><span class="chip left" id="chipL">лява ръка</span><span class="chip right" id="chipR">дясна ръка</span></div>
     <div id="expr"><h2 id="exprTitle">Физиономия</h2><div id="bsList"></div></div>
@@ -106,6 +129,13 @@ const MODEL = {
   holistic: G + 'holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task',
 };
 const NF = 478;                                   // face mesh points (incl. irises)
+const UA = (() => {                               // short 'Android · Chrome 153' for the cards, so a phone can be reported
+  const u = navigator.userAgent;
+  const os = /iPhone|iPad/.test(u) ? 'iPhone/iPad' : /Android/.test(u) ? 'Android' : /Windows/.test(u) ? 'Windows' : /Mac/.test(u) ? 'Mac' : '';
+  const m = u.match(/(Edg|OPR|CriOS|FxiOS|Chrome|Firefox|Version)\/(\d+)/);
+  const names = { Edg: 'Edge', OPR: 'Opera', CriOS: 'Chrome', FxiOS: 'Firefox', Version: 'Safari' };
+  return [os, m ? (names[m[1]] || m[1]) + ' ' + m[2] : ''].filter(Boolean).join(' · ');
+})();
 const BODY_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
 const BODY_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
 const HAND_BONES = HandLandmarker.HAND_CONNECTIONS.map(c => [c.start, c.end]);
@@ -140,7 +170,13 @@ const ui = { face: $('optFace'), hands: $('optHands'), body: $('optBody'), mesh:
   video: $('optVideo'), smooth: $('optSmooth'), engine: $('optEngine'), camSel: $('camSel'), status: $('status'),
   btnCam: $('btnCam'), btnSnap: $('btnSnap'), loading: $('loading'), exprTitle: $('exprTitle') };
 const chips = { face: $('chipFace'), body: $('chipBody'), L: $('chipL'), R: $('chipR') };
-const state = { W: 640, H: 480, mirror: true, running: false };
+const PHONE = window.matchMedia('(max-width: 760px)');
+$('btnTools').onclick = () => document.querySelector('header').classList.toggle('open');
+$('exprTitle').onclick = () => $('expr').classList.toggle('open');
+const state = { W: 640, H: 480, mirror: true, running: false, note: '', noteAt: 0 };
+function note(msg) { state.note = msg; state.noteAt = performance.now(); setStatus(); }
+window.addEventListener('error', ev => note('грешка: ' + String(ev.message || ev.error || '').slice(0, 120)));
+window.addEventListener('unhandledrejection', ev => note('грешка: ' + String((ev.reason && ev.reason.message) || ev.reason || '').slice(0, 120)));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const aspect = () => state.H / state.W;                       // image y (0..1) -> width units: y * aspect
 const dImg = (a, b) => Math.hypot(a.x - b.x, (a.y - b.y) * aspect());
@@ -397,7 +433,7 @@ function draw2D(res) {
   const W = overlay.width, H = overlay.height;
   octx.clearRect(0, 0, W, H);
   if (!ui.video.checked) { octx.fillStyle = '#000'; octx.fillRect(0, 0, W, H); }
-  const s = W / 640;
+  const s = Math.max(1, W / Math.max(1, overlay.clientWidth)) * 0.8;   // ~2.5 screen px whatever the camera size
   octx.lineCap = 'round'; octx.lineJoin = 'round';
   if (res.pose && ui.body.checked) {
     const p = res.pose, vis = i => (p[i].visibility == null || p[i].visibility > 0.5);
@@ -431,8 +467,9 @@ function updateBlend(cats, hasFace) {
     ui.exprTitle.textContent = hasFace ? 'Физиономия · няма при общ модел на видеокарта' : 'Физиономия · няма лице';
     bsRows.forEach(r => r.row.style.display = 'none'); return;
   }
-  ui.exprTitle.textContent = 'Физиономия';
   const top = cats.filter(c => c.categoryName !== '_neutral').sort((a, b) => b.score - a.score).slice(0, bsRows.length);
+  const compact = PHONE.matches && !$('expr').classList.contains('open');
+  ui.exprTitle.textContent = compact && top[0] ? 'Физиономия: ' + (BS_BG[top[0].categoryName] || top[0].categoryName) + ' ' + Math.round(top[0].score * 100) + '%' : 'Физиономия';
   bsRows.forEach((r, i) => {
     const c = top[i]; if (!c) { r.row.style.display = 'none'; return; }
     r.row.style.display = ''; r.n.textContent = BS_BG[c.categoryName] || c.categoryName;
@@ -458,14 +495,20 @@ function present(res) {
 // ---------------------------------------------------------------- engine management
 const CHAIN = ['sep:GPU', 'sep:CPU', 'holistic:CPU'];   // what "автоматично" tries, in order
 let backend = null, chainPos = 0, wanted = null;
-function showLoading(html) { ui.loading.innerHTML = '<div class="box">' + html + '</div>'; ui.loading.classList.remove('hidden'); }
-// The error card keeps the menu reachable and offers the way back; the long trace stays in the console.
+function showLoading(html, kind) {
+  ui.loading.dataset.kind = kind || 'loading';
+  ui.loading.innerHTML = '<div class="box">' + html + '<small style="display:block;margin-top:10px;opacity:.55">' + UA + '</small></div>';
+  ui.loading.classList.remove('hidden');
+}
+// A card keeps the menu reachable and always offers a way out; long traces stay in the console.
+function showCard(title, reason, buttons) {
+  showLoading('<b>' + title + '</b>' + (reason ? '<br><small>' + String(reason).replace(/</g, '&lt;') + '</small>' : '')
+    + '<div class="row">' + buttons.map(b => '<button' + (b.primary ? ' class="primary"' : '') + '>' + b.label + '</button>').join('') + '</div>', 'card');
+  ui.loading.querySelectorAll('button').forEach((el, i) => el.onclick = () => { ui.loading.classList.add('hidden'); if (buttons[i].onClick) buttons[i].onClick(); setStatus(); });
+}
 function showError(title, e) {
   const reason = String((e && e.message) || e || '').split('===')[0].replace(/\s+/g, ' ').trim().slice(0, 160);
-  showLoading('<b>' + title + '</b><br><small>' + reason.replace(/</g, '&lt;') + '</small>'
-    + '<div class="row"><button id="errAuto" class="primary">Върни автоматично</button><button id="errClose">Затвори</button></div>');
-  ui.loading.querySelector('#errAuto').onclick = () => { ui.engine.value = 'auto'; chainPos = 0; useEngine('auto'); };
-  ui.loading.querySelector('#errClose').onclick = () => { ui.loading.classList.add('hidden'); setStatus(); };
+  showCard(title, reason, [{ label: 'Върни автоматично', primary: true, onClick: () => { ui.engine.value = 'auto'; chainPos = 0; useEngine('auto'); } }, { label: 'Затвори' }]);
 }
 async function useEngine(sel) {
   const key = sel === 'auto' ? CHAIN[chainPos] : sel;
@@ -476,7 +519,7 @@ async function useEngine(sel) {
   try {
     const b = await createBackend(key);
     if (wanted !== key) { b.close(); return; }
-    backend = b; wanted = null; resetSmoothing(); ui.loading.classList.add('hidden'); setStatus();
+    backend = b; wanted = null; resetSmoothing(); if (ui.loading.dataset.kind !== 'card') ui.loading.classList.add('hidden'); setStatus();
   } catch (e) {
     console.error('engine failed', key, e);
     if (sel === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; return useEngine('auto'); }
@@ -492,18 +535,33 @@ function onDetectError(e) {
 ui.engine.onchange = () => { chainPos = 0; useEngine(ui.engine.value); };
 
 // ---------------------------------------------------------------- camera
-let stream = null;
+let stream = null, currentDeviceId = undefined;
+window.addEventListener('orientationchange', () => { if (IS_MOBILE && state.running) setTimeout(() => startCamera(currentDeviceId), 400); });
 async function startCamera(deviceId) {
   stopCamera();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setStatus('камерата работи само от файл на компютъра или от https адрес'); return;
   }
-  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
-  const c = { audio: false, video: deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: 'user', ...size } };
-  try { stream = await navigator.mediaDevices.getUserMedia(c); }
-  catch (e) { setStatus('камерата не е достъпна (' + e.name + ')'); return; }
+  const portrait = IS_MOBILE && window.innerHeight > window.innerWidth;
+  const size = portrait ? { width: { ideal: 720 }, height: { ideal: 1280 } } : { width: { ideal: 1280 }, height: { ideal: 720 } };
+  currentDeviceId = deviceId;
+  const pick = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' };
+  let last = null;
+  for (const c of [{ audio: false, video: { ...pick, ...size } }, { audio: false, video: pick }, { audio: false, video: true }]) {
+    try { stream = await navigator.mediaDevices.getUserMedia(c); last = null; break; }
+    catch (e) { last = e; if (e.name === 'NotAllowedError' || e.name === 'SecurityError') break; }
+  }
+  if (!stream) {
+    const why = { NotAllowedError: 'не е разрешена камера за тази страница', NotFoundError: 'не се намира камера',
+      NotReadableError: 'камерата е заета от друга програма', SecurityError: 'страницата не е на сигурен адрес' }[last && last.name]
+      || (last ? last.name + ': ' + last.message : 'неизвестна причина');
+    note('камерата не тръгна: ' + why);
+    showCard('Камерата не тръгна', why, [{ label: 'Опитай пак', primary: true, onClick: () => startCamera(deviceId) }, { label: 'Затвори' }]);
+    return;
+  }
   video.srcObject = stream;
-  await video.play().catch(() => {});
+  try { await video.play(); }
+  catch (e) { showCard('Докосни, за да тръгне камерата', '', [{ label: 'Пусни', primary: true, onClick: () => video.play().catch(err => note('камерата не тръгна: ' + err.name)) }]); }
   state.running = true; ui.btnCam.textContent = 'Спри камерата'; resetSmoothing(); setStatus();
   listCameras();
 }
@@ -522,10 +580,14 @@ async function listCameras() {
     ui.camSel.hidden = false;
   } catch {}
 }
-video.addEventListener('loadedmetadata', () => {
-  state.W = video.videoWidth || 640; state.H = video.videoHeight || 480;
+// The picture size is read whenever it changes (a phone turned, a camera that starts with a tiny first frame).
+function syncSize() {
+  if (!video.videoWidth || (video.videoWidth === state.W && video.videoHeight === state.H)) return;
+  state.W = video.videoWidth; state.H = video.videoHeight;
   overlay.width = state.W; overlay.height = state.H; resetSmoothing(); setStatus();
-});
+}
+video.addEventListener('loadedmetadata', syncSize);
+video.addEventListener('resize', syncSize);
 ui.camSel.onchange = () => startCamera(ui.camSel.value);
 ui.btnCam.onclick = () => state.running ? stopCamera() : startCamera(ui.camSel.hidden ? undefined : ui.camSel.value);
 
@@ -556,12 +618,14 @@ new ResizeObserver(resize).observe(view); resize();
 let fps = 0, frames = 0, fpsAt = performance.now(), lastVT = -1, lastTs = 0;
 function setStatus(msg) {
   const engine = backend ? backend.label : (wanted ? 'зареждам модел' : 'без двигател · избери от менюто');
-  ui.status.textContent = msg || [engine, state.running ? fps + ' к/с' : 'камерата е спряна', state.W + '×' + state.H].join(' · ');
+  const parts = [engine, state.running ? fps + ' к/с' : 'камерата е спряна', state.W + '×' + state.H];
+  if (state.note && performance.now() - state.noteAt < 15000) parts.push(state.note);
+  ui.status.textContent = msg || parts.join(' · ');
 }
 function loop() {
   requestAnimationFrame(loop);
-  if (backend && state.running && video.readyState >= 2 && video.currentTime !== lastVT) {
-    lastVT = video.currentTime;
+  if (backend && state.running && video.readyState >= 2 && video.currentTime !== lastVT && video.videoWidth >= 32) {
+    lastVT = video.currentTime; syncSize();
     let ts = Math.round(performance.now()); if (ts <= lastTs) ts = lastTs + 1; lastTs = ts;
     let res = null;
     try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
