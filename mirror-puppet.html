@@ -31,7 +31,9 @@ body.novideo .picture video{visibility:hidden}
 .chip.on{color:#04121c;border-color:transparent}
 .chip.on.face{background:var(--face)}.chip.on.body{background:var(--body)}.chip.on.left{background:var(--left)}.chip.on.right{background:var(--right)}
 #expr{position:absolute;left:10px;bottom:10px;width:240px;background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
-#expr h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted)}
+#expr h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#expr:not(.open) .bs{display:none}
+#expr:not(.open) h2{margin:0}
 .bs{display:grid;grid-template-columns:1fr 46px;gap:2px 6px;align-items:center;margin:3px 0}
 .bs .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bs .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -58,7 +60,7 @@ body.novideo .picture video{visibility:hidden}
   body.puppet #cam{display:none}
   body:not(.puppet) #view3d{display:none}
   #cam{display:flex;flex-direction:column;overflow:auto}
-  .picture{position:relative;inset:auto;width:100%;flex:0 0 auto;aspect-ratio:var(--ar,16/9);max-height:72%}
+  .picture{position:relative;inset:auto;width:100%;flex:0 1 auto;aspect-ratio:var(--ar,16/9);min-height:0}
   #expr{position:static;width:auto;margin:8px;flex:0 0 auto}
   #hint{display:none}
 }
@@ -138,7 +140,7 @@ const UA = (() => {                               // short 'Android · Chrome 15
   return [os, m ? (names[m[1]] || m[1]) + ' ' + m[2] : ''].filter(Boolean).join(' · ');
 })();
 const BODY_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
-const BODY_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+const BODY_BONES = [[11, 13], [13, 15], [12, 14], [14, 16], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
 const HAND_BONES = HandLandmarker.HAND_CONNECTIONS.map(c => [c.start, c.end]);
 const FACE_TESS = FaceLandmarker.FACE_LANDMARKS_TESSELATION.map(c => [c.start, c.end]);
 const FACE_CONT = [...FaceLandmarker.FACE_LANDMARKS_CONTOURS, ...FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, ...FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS].map(c => [c.start, c.end]);
@@ -179,6 +181,25 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const aspect = () => state.H / state.W;                       // image y (0..1) -> width units: y * aspect
 const dImg = (a, b) => Math.hypot(a.x - b.x, (a.y - b.y) * aspect());
 const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+// ---------------------------------------------------------------- derived torso
+// The pose model has no neck, chest or clavicles. The neck root is placed below the chin (55 % of the face
+// height) and half a head-depth behind it; the clavicles run from there to the shoulder joints, the spine down
+// to the pelvis. The same arithmetic serves image points (2D) and scene points (3D).
+const midPt = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: a.z != null ? (a.z + b.z) / 2 : undefined });
+function addDelta(o, a, b, k) { o.x += (a.x - b.x) * k; o.y += (a.y - b.y) * k; if (o.z != null && a.z != null) o.z += (a.z - b.z) * k; return o; }
+function torsoFromFace(chin, forehead, nose, headL, headR) {
+  const root = { x: chin.x, y: chin.y, z: chin.z };
+  addDelta(root, chin, forehead, 0.55); addDelta(root, midPt(headL, headR), nose, 0.5);
+  return { chin: { x: chin.x, y: chin.y, z: chin.z }, root };
+}
+function torsoFromPose(p) {   // when there is no face mesh: from the eyes, mouth, ears and nose of the pose
+  const em = midPt(p[2], p[5]), mm = midPt(p[9], p[10]), earm = midPt(p[7], p[8]);
+  const chin = addDelta({ ...mm }, mm, em, 0.5);
+  const root = addDelta(addDelta({ ...mm }, mm, em, 1.9), earm, p[0], 0.5);
+  return { chin, root };
+}
+const HEAD_IDS = [0, 2, 5, 7, 8, 9, 10];
 
 // ---------------------------------------------------------------- recognition engines
 // Every engine returns the same shape: { face, blend, pose, poseWorld, hands:[{side:'L'|'R', attached, img, world}] }
@@ -316,8 +337,13 @@ function makeRig(jointIds, bones, nPts, color, rJoint, rBone) {
 const body = makeRig(BODY_JOINTS, BODY_BONES, 33, COLOR.body, 0.022, 0.013);
 const handRig = { L: makeRig([...Array(21).keys()], HAND_BONES, 21, COLOR.L, 0.009, 0.0055),
                   R: makeRig([...Array(21).keys()], HAND_BONES, 21, COLOR.R, 0.009, 0.0055) };
-const neck = new THREE.Mesh(cylGeo, matBone(COLOR.body)); neck.visible = false; scene.add(neck);
+const torsoMat = matBone(COLOR.body), torsoJointMat = matJoint(COLOR.body);
+const mkBone = () => { const m = new THREE.Mesh(cylGeo, torsoMat); m.visible = false; scene.add(m); return m; };
+const mkJoint = r => { const m = new THREE.Mesh(sphereGeo, torsoJointMat); m.scale.setScalar(r); m.visible = false; scene.add(m); return m; };
+const neck = mkBone(), clavL = mkBone(), clavR = mkBone(), spine = mkBone();
+const rootJoint = mkJoint(0.024), chinJoint = mkJoint(0.014), pelvisJoint = mkJoint(0.024);
 const head = new THREE.Mesh(sphereGeo, matBone(COLOR.face)); head.scale.setScalar(0.085); head.visible = false; scene.add(head);
+let lastPW = null;   // the last pose (world) result, for the visibility of its points
 
 // The face: 478 shared points, drawn as the mesh (thin), the contours (bright) and dots
 const facePos = new Float32Array(NF * 3);
@@ -356,6 +382,7 @@ function resetSmoothing() { for (const s of Object.values(sm)) s.on = false; }
 // ---------------------------------------------------------------- puppet update
 function updateBody(res) {
   const pw = res.poseWorld, pi = res.pose;
+  lastPW = pw;
   if (!pw || !pi) { body.group.visible = false; sm.body.on = false; return false; }
   // metres per frame width, read off the shoulders; the shoulder midpoint is placed by its position in the frame
   const dI = dImg(pi[11], pi[12]), dW = d3(pw[11], pw[12]);
@@ -405,12 +432,25 @@ function updateFace(res) {
   sm.face.on = true; faceGroup.visible = true; tessLines.visible = ui.mesh.checked;
   return true;
 }
-function updateNeckAndHead(hasBody, hasFace) {
-  if (!hasBody || !ui.body.checked) { neck.visible = false; head.visible = false; return; }
-  _a.addVectors(body.pts[11], body.pts[12]).multiplyScalar(0.5);
-  if (hasFace) { _b.set(facePos[152 * 3], facePos[152 * 3 + 1], facePos[152 * 3 + 2]); head.visible = false; }
-  else { _b.copy(body.pts[0]); _b.z -= 0.05; head.visible = true; head.position.copy(_b); _b.y -= 0.08; }
+function updateTorso(hasBody, hasFace) {
+  const parts = [neck, clavL, clavR, spine, rootJoint, chinJoint, pelvisJoint, head];
+  const visW = i => hasBody && lastPW && (lastPW[i].visibility == null || lastPW[i].visibility > 0.5);
+  const fp = i => ({ x: facePos[i * 3], y: facePos[i * 3 + 1], z: facePos[i * 3 + 2] });
+  let t = null;
+  if (ui.body.checked) {
+    if (hasFace) t = torsoFromFace(fp(152), fp(10), fp(1), fp(234), fp(454));
+    else if (HEAD_IDS.every(visW)) t = torsoFromPose(body.pts);
+  }
+  if (!t) { parts.forEach(m => m.visible = false); return; }
+  _a.set(t.root.x, t.root.y, t.root.z); _b.set(t.chin.x, t.chin.y, t.chin.z);
   setBone(neck, _a, _b, 0.02);
+  rootJoint.visible = true; rootJoint.position.copy(_a);
+  chinJoint.visible = true; chinJoint.position.copy(_b);
+  head.visible = !hasFace && hasBody; if (head.visible) { head.position.copy(body.pts[0]); head.position.z -= 0.05; }
+  if (visW(11)) setBone(clavL, _a, body.pts[11], 0.013); else clavL.visible = false;
+  if (visW(12)) setBone(clavR, _a, body.pts[12], 0.013); else clavR.visible = false;
+  if (visW(23) && visW(24)) { _t.addVectors(body.pts[23], body.pts[24]).multiplyScalar(0.5); setBone(spine, _a, _t, 0.014); pelvisJoint.visible = true; pelvisJoint.position.copy(_t); }
+  else { spine.visible = false; pelvisJoint.visible = false; }
 }
 
 // ---------------------------------------------------------------- 2D overlay
@@ -437,14 +477,24 @@ function draw2D(res) {
     const p = res.pose, vis = i => (p[i].visibility == null || p[i].visibility > 0.5);
     octx.strokeStyle = CSS.body; octx.lineWidth = 3 * s;
     strokePairs(p, BODY_BONES, W, H, (a, b) => vis(a) && vis(b));
-    // the neck: from between the shoulders up to the chin (or to just under the mouth when there is no face mesh)
-    if (vis(11) && vis(12)) {
-      const top = res.face ? res.face[152] : { x: (p[9].x + p[10].x) / 2, y: (p[9].y + p[10].y) / 2 + 0.03 };
-      octx.beginPath();
-      octx.moveTo((p[11].x + p[12].x) / 2 * W, (p[11].y + p[12].y) / 2 * H); octx.lineTo(top.x * W, top.y * H);
-      octx.stroke();
-    }
     octx.fillStyle = CSS.body; dots(p, BODY_JOINTS, W, H, 5 * s, vis);
+  }
+  if (ui.body.checked) {   // neck root below the chin; clavicles to the shoulders; spine to the pelvis
+    const p = res.pose, vis = i => p && (p[i].visibility == null || p[i].visibility > 0.5);
+    let t = null;
+    if (res.face) t = torsoFromFace(res.face[152], res.face[10], res.face[1], res.face[234], res.face[454]);
+    else if (p && HEAD_IDS.every(vis)) t = torsoFromPose(p);
+    if (t) {
+      const line = (a, b) => { octx.beginPath(); octx.moveTo(a.x * W, a.y * H); octx.lineTo(b.x * W, b.y * H); octx.stroke(); };
+      octx.strokeStyle = CSS.body; octx.lineWidth = 3 * s;
+      line(t.root, t.chin);
+      if (vis(11)) line(t.root, p[11]);
+      if (vis(12)) line(t.root, p[12]);
+      const pelvis = vis(23) && vis(24) ? midPt(p[23], p[24]) : null;
+      if (pelvis) line(t.root, pelvis);
+      const pts = pelvis ? [t.root, t.chin, pelvis] : [t.root, t.chin];
+      octx.fillStyle = CSS.body; dots(pts, pts.map((_, i) => i), W, H, 5 * s);
+    }
   }
   for (const h of res.hands) {
     octx.strokeStyle = CSS[h.side]; octx.lineWidth = 2.5 * s;
@@ -468,12 +518,14 @@ for (let i = 0; i < 6; i++) {
 let bsAt = 0;
 function updateBlend(cats, hasFace) {
   const now = performance.now(); if (now - bsAt < 120) return; bsAt = now;
+  const open = $('expr').classList.contains('open'), arrow = open ? ' \u25be' : ' \u25b8';
   if (!cats || !cats.length) {
-    ui.exprTitle.textContent = hasFace ? 'Expression · not available with combined · GPU' : 'Expression · no face';
+    ui.exprTitle.textContent = (hasFace ? 'Expression · none in this mode' : 'Expression · no face') + arrow;
     bsRows.forEach(r => r.row.style.display = 'none'); return;
   }
-  ui.exprTitle.textContent = 'Expression';
   const top = cats.filter(c => c.categoryName !== '_neutral').sort((a, b) => b.score - a.score).slice(0, bsRows.length);
+  ui.exprTitle.textContent = open || !top[0] ? 'Expression' + arrow
+    : 'Expression' + arrow + ' ' + (BS_NAME[top[0].categoryName] || top[0].categoryName) + ' ' + Math.round(top[0].score * 100) + '%';
   bsRows.forEach((r, i) => {
     const c = top[i]; if (!c) { r.row.style.display = 'none'; return; }
     r.row.style.display = ''; r.n.textContent = BS_NAME[c.categoryName] || c.categoryName;
@@ -489,7 +541,7 @@ function present(res) {
   const seen = { L: false, R: false };
   for (const h of res.hands) if (!seen[h.side]) { seen[h.side] = true; updateHand(h); }
   for (const s of ['L', 'R']) if (!seen[s]) { handRig[s].group.visible = false; sm[s].on = false; }
-  updateNeckAndHead(hasBody, hasFace);
+  updateTorso(hasBody, hasFace);
   chips.face.classList.toggle('on', hasFace);
   chips.body.classList.toggle('on', hasBody && ui.body.checked);
   chips.L.classList.toggle('on', seen.L); chips.R.classList.toggle('on', seen.R);
@@ -602,6 +654,7 @@ ui.mirror.onchange = () => { state.mirror = ui.mirror.checked; document.body.cla
 ui.video.onchange = () => document.body.classList.toggle('novideo', !ui.video.checked);
 $('front').onclick = frontView;
 $('btnTools').onclick = () => document.querySelector('header').classList.toggle('open');
+$('exprTitle').onclick = () => $('expr').classList.toggle('open');
 // On a phone there is one view at a time: the camera picture or the puppet
 ui.btnView.onclick = () => {
   const puppet = document.body.classList.toggle('puppet');
