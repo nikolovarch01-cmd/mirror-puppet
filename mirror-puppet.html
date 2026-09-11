@@ -364,7 +364,8 @@ const view = $('view3d');
 const renderer = new THREE.WebGLRenderer({ antialias: !IS_MOBILE, alpha: true });
 renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio || 1, 2));
 view.appendChild(renderer.domElement);
-renderer.domElement.addEventListener('webglcontextlost', () => note('the 3D view lost its graphics context (low memory) - reload the page'));
+renderer.domElement.addEventListener('webglcontextlost', () => note('3D view lost its graphics context (low memory)'));
+renderer.domElement.addEventListener('webglcontextrestored', () => { note('3D view restored'); resize(); });
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1317);
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 30);
@@ -1215,7 +1216,7 @@ function loop() {
     try { res = backend.detect(video, ts); } catch (e) { onDetectError(e); }
     if (res) detectPhones(ts);
     const t1 = performance.now();
-    if (res) { present(res); frames++; }
+    if (res) { try { present(res); frames++; } catch (e) { console.error('present failed', e); note('draw error: ' + String((e && e.message) || e).slice(0, 80)); } }
     const t2 = performance.now();
     perf.detect += (t1 - t0 - perf.detect) * 0.1; perf.draw += (t2 - t1 - perf.draw) * 0.1;
   }
