@@ -30,6 +30,7 @@ build step, no bundler. `tools/codemap.py` regenerates everything below the mark
 | the expression list | `overlay.js` (`updateBlend`) |
 | the camera stream, front/back, sizes, the camera cards, the picture size | `camera.js` |
 | Mirror, Flip, Puppet/Camera switch, Snapshot, header buttons | `camera.js` (controls) |
+| the Performance panel: busy % per thread, the GPU estimate, the rows and bars | `monitor.js` (`mon.report` is what a thread calls, `mon.tick` draws once a second) |
 | the frame: what happens in which order every frame | `main.js` (`present`, `loop`) |
 | the status line | `main.js` (`setStatus`) |
 | the console handle the tests use (`window.mirrorPuppet`) and the start-up order | `main.js` (end of file) |
@@ -61,11 +62,12 @@ build step, no bundler. `tools/codemap.py` regenerates everything below the mark
 | `js/skeleton.js` | 211 | skeleton: the 3D scene (renderer, cameras, lights, grid), the rigs of joints and bones for the body, the hands and the face, image/world → scene coordinates, smoothing, the puppet update per frame, and the sizing of the 3D canvas to its box. |
 | `js/eyes.js` | 75 | eyes: two eyeballs of our own where the character's own eyes were, and the gaze that turns them (Google's eyeLook values when the engine gives them, iris / corner / lid ratios otherwise). |
 | `js/character.js` | 371 | character: his textured AccuRIG model, loaded on demand; directional retargeting of the smoothed landmarks onto its bones (Character 3D); the On-camera fit in image space with unrecognised regions hidden by a per-vertex mask; the display switch skeleton / character / on camera; the rest-pose button. |
-| `js/phone.js` | 182 | phone: the cell-phone detector in its own worker (fed with bytes from the local store), which hand holds, and the phone (his iPhone model, a slab until it loads) placed from the hand points in every view. |
+| `js/phone.js` | 185 | phone: the cell-phone detector in its own worker (fed with bytes from the local store), which hand holds, and the phone (his iPhone model, a slab until it loads) placed from the hand points in every view. |
 | `js/overlay.js` | 101 | 2D drawing: the skeleton over the camera picture (body, derived torso, hands with the phone rectangle, face mesh and contours) and the expression list under the picture. |
 | `js/camera.js` | 104 | camera and buttons: the camera stream (front / back, sizes, failures on a card), the picture size, mirror, the phone's one-view switch, the snapshot, and the header buttons. |
-| `js/main.js` | 76 | the loop: one frame (recognition → 2D drawing → puppet → character → phone), the status line, the console handle for the tests, and the start-up. The modules import each other in circles (a function defined in a later file is called from an earlier one). That is safe because no module touches another module's variables while the files are still loading: at load time each file only builds its own objects and points event handlers at functions; the calls come later. |
-| `mirror-puppet.html` | 148 | style, markup, import map + build stamp, the module tag |
+| `js/monitor.js` | 98 | monitor: what the machine does each second — the main thread, every recognition thread, the video card — shown in the Performance panel (closed by default: one summary line; tap to open the rows with bars). Busy % of a thread = milliseconds it worked in the last second / 1000, so 100 − busy is the room left for more work on that thread. The GPU share is an estimate: the time of GPU-delegate recognition (which includes some CPU pre/post-processing) plus the measured draw time of the 3D view when the browser can time it (EXT_disjoint_timer_query_webgl2); no browser exposes a real GPU utilisation figure. |
+| `js/main.js` | 82 | the loop: one frame (recognition → 2D drawing → puppet → character → phone), the status line, the console handle for the tests, and the start-up. The modules import each other in circles (a function defined in a later file is called from an earlier one). That is safe because no module touches another module's variables while the files are still loading: at load time each file only builds its own objects and points event handlers at functions; the calls come later. |
+| `mirror-puppet.html` | 155 | style, markup, import map + build stamp, the module tag |
 
 ## `js/core.js`
 
@@ -269,46 +271,46 @@ character: his textured AccuRIG model, loaded on demand; directional retargeting
 
 phone: the cell-phone detector in its own worker (fed with bytes from the local store), which hand holds, and the phone (his iPhone model, a slab until it loads) placed from the hand points in every view.
 
-- imports from: `three` (1: THREE); `@mediapipe/tasks-vision` (2: FilesetResolver, ObjectDetector); `core` (8 names); `engines` (2: bigFile, getFileset); `skeleton` (4: avatar, scene, isOverlay, handRig)
+- imports from: `three` (1: THREE); `@mediapipe/tasks-vision` (2: FilesetResolver, ObjectDetector); `core` (8 names); `engines` (2: bigFile, getFileset); `skeleton` (4: avatar, scene, isOverlay, handRig); `monitor` (1: mon)
 - exports: `phone`, `ensurePhoneDetector`, `detectPhones`, `acceptBoxes`, `phoneFrame`, `holding`, `updatePhones`
 
-- L15 `const` `phone`
-- L18 `const` `phoneWorkerSrc` — The detector runs in a worker (its own thread), so the picture never stalls while it thinks; the main thread only sends a frame every 4th fr
-- L19 `run` `"let det = null;\n" +`
-- L20 `run` `"self.onmessage = async e => {\n" +`
-- L21 `run` `"  const m = e.data;\n" +`
-- L22 `run` `"  if (m.type === 'init') {\n" +`
-- L23 `run` `"    try {\n" +`
-- L24 `run` `"      importScripts(URL.createObjectURL(new Blob([m.lib], { type: 'text/javascript' })));`
-- L25 `run` `"      const fs = { wasmLoaderPath: URL.createObjectURL(new Blob([m.js], { type: 'text/jav`
-- L26 `run` `"      const opts = d => ({ baseOptions: { modelAssetBuffer: new Uint8Array(m.model), dele`
-- L27 `run` `"      try { det = await ObjectDetector.createFromOptions(fs, opts('GPU')); self.postMessa`
-- L28 `run` `"      catch (err) { det = await ObjectDetector.createFromOptions(fs, opts('CPU')); self.p`
-- L29 `run` `"    } catch (err) { self.postMessage({ type: 'error', message: String((err && err.message`
-- L30 `run` `"    return;\n" +`
-- L31 `run` `"  }\n" +`
-- L32 `run` `"  if (m.type === 'frame') {\n" +`
-- L33 `run` `"    let boxes = [];\n" +`
-- L34 `run` `"    try { if (det) boxes = det.detect(m.bitmap).detections.map(d => ({ originX: d.boundin`
-- L35 `run` `"    catch (err) { self.postMessage({ type: 'error', message: String((err && err.message) `
-- L36 `run` `"    m.bitmap.close(); self.postMessage({ type: 'boxes', boxes });\n" +`
-- L37 `run` `"  }\n" +`
-- L38 `run` `"};\n";`
-- L39 `async fn` `ensurePhoneDetector()`
-- L71 `const` `await_` — (the inline fallback reuses the model bytes as they are)
-- L72 `fn` `detectPhones(ts, hands)` — every 4th frame, only in 'auto', only while a hand is in the picture
-- L87 `fn` `acceptBoxes(boxes, hands)` — A box counts for a hand only if: it is at least 50 % sure, it is shaped like a phone (long side 1.4-2.8 x the short side, not most of the pi
-- L105 `const` `phoneMat` — a white back, like his
-- L106 `const` `islandMat`
-- L107 `const` `lensMat`
-- L111 `async fn` `loadPhoneModel()` — The real look: 'aiPhone 15 Pro - Low Poly smartphone' by hysokana (Sketchfab, CC BY-NC 4.0), 14.6 x 7 x 0.8 cm in metres, screen towards +z.
-- L130 `fn` `dressPhone(g)`
-- L134 `fn` `phoneMesh(side)` — sized in units of the hand length: 1.47 x 0.72 x 0.08 (14.7 x 7.2 x 0.8 cm for a 10 cm hand)
-- L144 `const` `_pc, _pl, _ps, _pn, _pf, _pm`
-- L145 `fn` `phoneFrame(pts)` — pts: 21 Vector3-like points -> { c, long, short, normal, L }
-- L154 `fn` `holding(side)`
-- L157 `fn` `updatePhones(res)` — The phone is a fixed size (1.47 hand lengths long) and always in the hand: on the palm side, tilted with the palm, its long edge along which
-- L180 `on` `$('optPhone').onchange`
+- L16 `const` `phone`
+- L19 `const` `phoneWorkerSrc` — The detector runs in a worker (its own thread), so the picture never stalls while it thinks; the main thread only sends a frame every 4th fr
+- L20 `run` `"let det = null;\n" +`
+- L21 `run` `"self.onmessage = async e => {\n" +`
+- L22 `run` `"  const m = e.data;\n" +`
+- L23 `run` `"  if (m.type === 'init') {\n" +`
+- L24 `run` `"    try {\n" +`
+- L25 `run` `"      importScripts(URL.createObjectURL(new Blob([m.lib], { type: 'text/javascript' })));`
+- L26 `run` `"      const fs = { wasmLoaderPath: URL.createObjectURL(new Blob([m.js], { type: 'text/jav`
+- L27 `run` `"      const opts = d => ({ baseOptions: { modelAssetBuffer: new Uint8Array(m.model), dele`
+- L28 `run` `"      try { det = await ObjectDetector.createFromOptions(fs, opts('GPU')); self.postMessa`
+- L29 `run` `"      catch (err) { det = await ObjectDetector.createFromOptions(fs, opts('CPU')); self.p`
+- L30 `run` `"    } catch (err) { self.postMessage({ type: 'error', message: String((err && err.message`
+- L31 `run` `"    return;\n" +`
+- L32 `run` `"  }\n" +`
+- L33 `run` `"  if (m.type === 'frame') {\n" +`
+- L34 `run` `"    let boxes = []; const t = performance.now();\n" +`
+- L35 `run` `"    try { if (det) boxes = det.detect(m.bitmap).detections.map(d => ({ originX: d.boundin`
+- L36 `run` `"    catch (err) { self.postMessage({ type: 'error', message: String((err && err.message) `
+- L37 `run` `"    m.bitmap.close(); self.postMessage({ type: 'boxes', boxes, ms: performance.now() - t `
+- L38 `run` `"  }\n" +`
+- L39 `run` `"};\n";`
+- L40 `async fn` `ensurePhoneDetector()`
+- L72 `const` `await_` — (the inline fallback reuses the model bytes as they are)
+- L73 `fn` `detectPhones(ts, hands)` — every 4th frame, only in 'auto', only while a hand is in the picture
+- L90 `fn` `acceptBoxes(boxes, hands)` — A box counts for a hand only if: it is at least 50 % sure, it is shaped like a phone (long side 1.4-2.8 x the short side, not most of the pi
+- L108 `const` `phoneMat` — a white back, like his
+- L109 `const` `islandMat`
+- L110 `const` `lensMat`
+- L114 `async fn` `loadPhoneModel()` — The real look: 'aiPhone 15 Pro - Low Poly smartphone' by hysokana (Sketchfab, CC BY-NC 4.0), 14.6 x 7 x 0.8 cm in metres, screen towards +z.
+- L133 `fn` `dressPhone(g)`
+- L137 `fn` `phoneMesh(side)` — sized in units of the hand length: 1.47 x 0.72 x 0.08 (14.7 x 7.2 x 0.8 cm for a 10 cm hand)
+- L147 `const` `_pc, _pl, _ps, _pn, _pf, _pm`
+- L148 `fn` `phoneFrame(pts)` — pts: 21 Vector3-like points -> { c, long, short, normal, L }
+- L157 `fn` `holding(side)`
+- L160 `fn` `updatePhones(res)` — The phone is a fixed size (1.47 hand lengths long) and always in the hand: on the palm side, tilted with the palm, its long edge along which
+- L183 `on` `$('optPhone').onchange`
 
 ## `js/overlay.js`
 
@@ -358,66 +360,81 @@ camera and buttons: the camera stream (front / back, sizes, failures on a card),
 - L82 `on` `ui.btnView.onclick` — On a phone there is one view at a time: the camera picture or the puppet
 - L90 `on` `ui.btnSnap.onclick`
 
+## `js/monitor.js`
+
+monitor: what the machine does each second — the main thread, every recognition thread, the video card — shown in the Performance panel (closed by default: one summary line; tap to open the rows with bars). Busy % of a thread = milliseconds it worked in the last second / 1000, so 100 − busy is the room left for more work on that thread. The GPU share is an estimate: the time of GPU-delegate recognition (which includes some CPU pre/post-processing) plus the measured draw time of the 3D view when the browser can time it (EXT_disjoint_timer_query_webgl2); no browser exposes a real GPU utilisation figure.
+
+- imports from: `core` (1: $); `skeleton` (1: renderer)
+- exports: `mon`
+
+- L10 `const` `KIND_ORDER`
+- L11 `const` `mon`
+- L86 `fn` `initGpu()`
+- L97 `on` `$('perfTitle').onclick`
+
 ## `js/main.js`
 
 the loop: one frame (recognition → 2D drawing → puppet → character → phone), the status line, the console handle for the tests, and the start-up. The modules import each other in circles (a function defined in a later file is called from an earlier one). That is safe because no module touches another module's variables while the files are still loading: at load time each file only builds its own objects and points event handlers at functions; the calls come later.
 
-- imports from: `three` (1: THREE); `core` (8 names); `engines` (4: backend, wanted, useEngine, onDetectError); `skeleton` (16 names); `eyes` (1: eyes); `character` (3: loadAvatar, updateAvatar, configureDisplay); `phone` (4: phone, acceptBoxes, detectPhones, updatePhones); `overlay` (2: draw2D, updateBlend); `camera` (3: startCamera, stopCamera, syncSize)
+- imports from: `three` (1: THREE); `core` (8 names); `engines` (4: backend, wanted, useEngine, onDetectError); `skeleton` (16 names); `eyes` (1: eyes); `character` (3: loadAvatar, updateAvatar, configureDisplay); `phone` (4: phone, acceptBoxes, detectPhones, updatePhones); `overlay` (2: draw2D, updateBlend); `camera` (3: startCamera, stopCamera, syncSize); `monitor` (1: mon)
 - exports: `present`, `setStatus`, `perf`
 
-- L18 `fn` `present(res)`
+- L19 `fn` `present(res)`
 
 **loop**
 
-- L37 `let` `fps, frames, fpsAt, lastVT, lastTs`
-- L38 `const` `perf` — ms per frame: recognition, then drawing (smoothed)
-- L39 `fn` `setStatus(msg)`
-- L45 `fn` `loop()`
-- L66 `run` `window.mirrorPuppet = { THREE, state, phone, eyes, acceptBoxes, present, startCamera, stop` — a small handle for testing from the console
-- L68 `run` `configureDisplay(); loadAvatar().catch(() => {});`
-- L69 `run` `loop();`
-- L70 `run` `useEngine(ui.engine.value);`
-- L71 `run` `startCamera();`
-- L74 `const` `BUILD` — the build stamp (the ?v= of this file, see tools/stamp.py) shown in Settings, so a phone screenshot tells which build it runs
-- L75 `run` `$('build').textContent = 'build ' + BUILD; window.mirrorPuppet.build = BUILD;`
+- L38 `let` `fps, frames, fpsAt, lastVT, lastTs`
+- L39 `const` `perf` — ms per frame: recognition, then drawing (smoothed)
+- L40 `fn` `setStatus(msg)`
+- L46 `fn` `loop()`
+- L72 `run` `window.mirrorPuppet = { THREE, state, phone, eyes, mon, acceptBoxes, present, startCamera,` — a small handle for testing from the console
+- L74 `run` `configureDisplay(); loadAvatar().catch(() => {});`
+- L75 `run` `loop();`
+- L76 `run` `useEngine(ui.engine.value);`
+- L77 `run` `startCamera();`
+- L80 `const` `BUILD` — the build stamp (the ?v= of this file, see tools/stamp.py) shown in Settings, so a phone screenshot tells which build it runs
+- L81 `run` `$('build').textContent = 'build ' + BUILD; window.mirrorPuppet.build = BUILD;`
 
 ## `mirror-puppet.html` — elements by id
 
-- L79 `#btnCam` button
-- L80 `#btnView` button
-- L81 `#btnFlip` button — Front / back camera
-- L82 `#btnTools` button
-- L84 `#camSel` select — Which camera
-- L85 `#optFace` input
-- L86 `#optHands` input
-- L87 `#optBody` input
-- L88 `#optMesh` input
-- L89 `#optMirror` input
-- L90 `#optVideo` input
-- L91 `#optSmooth` input
-- L92 `#optEngine` select
-- L99 `#avatarMode` select
-- L100 `#optGuides` input
-- L101 `#optPhone` select — A phone in the hand: found automatically, or forced
-- L102 `#avatarRest` button — Stop camera and inspect the character rest pose
-- L103 `#btnSnap` button — Saves a picture of both views
-- L104 `#build` span
-- L106 `#status` span
-- L109 `#cam` section
-- L111 `#video` video
-- L112 `#overlay` canvas
-- L113 `#chipFace` span
-- L113 `#chipBody` span
-- L113 `#chipL` span
-- L113 `#chipR` span
-- L113 `#chipPhone` span
-- L115 `#expr` div
-- L115 `#exprTitle` h2
-- L115 `#bsList` div
-- L117 `#view3d` section
-- L118 `#avatarInfo` div
-- L119 `#front` button
-- L120 `#hint` div
-- L122 `#loading` div
-- L122 `#prog` small
+- L84 `#btnCam` button
+- L85 `#btnView` button
+- L86 `#btnFlip` button — Front / back camera
+- L87 `#btnTools` button
+- L89 `#camSel` select — Which camera
+- L90 `#optFace` input
+- L91 `#optHands` input
+- L92 `#optBody` input
+- L93 `#optMesh` input
+- L94 `#optMirror` input
+- L95 `#optVideo` input
+- L96 `#optSmooth` input
+- L97 `#optEngine` select
+- L104 `#avatarMode` select
+- L105 `#optGuides` input
+- L106 `#optPhone` select — A phone in the hand: found automatically, or forced
+- L107 `#avatarRest` button — Stop camera and inspect the character rest pose
+- L108 `#btnSnap` button — Saves a picture of both views
+- L109 `#build` span
+- L111 `#status` span
+- L114 `#cam` section
+- L116 `#video` video
+- L117 `#overlay` canvas
+- L118 `#chipFace` span
+- L118 `#chipBody` span
+- L118 `#chipL` span
+- L118 `#chipR` span
+- L118 `#chipPhone` span
+- L120 `#expr` div
+- L120 `#exprTitle` h2
+- L120 `#bsList` div
+- L121 `#perf` div — What the machine does each second: main thread, recognition threads, video card
+- L121 `#perfTitle` h2
+- L121 `#perfList` div
+- L123 `#view3d` section
+- L124 `#avatarInfo` div
+- L125 `#front` button
+- L126 `#hint` div
+- L128 `#loading` div
+- L128 `#prog` small
 

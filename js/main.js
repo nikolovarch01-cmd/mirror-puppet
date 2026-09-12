@@ -13,6 +13,7 @@ import { loadAvatar, updateAvatar, configureDisplay } from './character.js';
 import { phone, acceptBoxes, detectPhones, updatePhones } from './phone.js';
 import { draw2D, updateBlend } from './overlay.js';
 import { startCamera, stopCamera, syncSize } from './camera.js';
+import { mon } from './monitor.js';
 
 // ---------------------------------------------------------------- one frame
 function present(res) {
@@ -55,15 +56,20 @@ function loop() {
     if (res) { try { present(res); frames++; } catch (e) { console.error('present failed', e); note('draw error: ' + String((e && e.message) || e).slice(0, 80)); } }
     const t2 = performance.now();
     perf.detect += (t1 - t0 - perf.detect) * 0.1; perf.draw += (t2 - t1 - perf.draw) * 0.1;
+    mon.report('main', t2 - t0, { kind: 'main' });
+    if (backend && !backend.threads) mon.report('recognition (main thread)', t1 - t0, { kind: 'main', delegate: backend.key.split(':')[1] });
   }
   const now = performance.now();
-  if (now - fpsAt >= 1000) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; setStatus(); }
+  if (now - fpsAt >= 1000) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; setStatus(); mon.tick(now); }
   if (controls.enabled) controls.update();
-  if (isOverlay() || (view.clientWidth && view.clientHeight)) renderer.render(scene, renderCamera());
+  if (isOverlay() || (view.clientWidth && view.clientHeight)) {
+    const r0 = performance.now(); mon.gpuBegin(); renderer.render(scene, renderCamera()); mon.gpuEnd();
+    mon.report('main', performance.now() - r0, { kind: 'main' });
+  }
 }
 
 // a small handle for testing from the console
-window.mirrorPuppet = { THREE, state, phone, eyes, acceptBoxes, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
+window.mirrorPuppet = { THREE, state, phone, eyes, mon, acceptBoxes, present, startCamera, stopCamera, renderer, scene, camera, overlayCamera, renderCamera, resize, avatar, loadAvatar, canvases: () => ({ overlay, three: renderer.domElement }), get backend() { return backend; } };
 
 configureDisplay(); loadAvatar().catch(() => {});
 loop();

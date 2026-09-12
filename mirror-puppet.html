@@ -34,6 +34,10 @@ body.novideo .picture video{visibility:hidden}
 #expr h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #expr:not(.open) .bs{display:none}
 #expr:not(.open) h2{margin:0}
+#perf{position:absolute;right:10px;bottom:10px;width:270px;max-width:calc(100% - 20px);background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:2}
+#perf h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#perf:not(.open) .bs{display:none}
+#perf:not(.open) h2{margin:0}
 .bs{display:grid;grid-template-columns:1fr 46px;gap:2px 6px;align-items:center;margin:3px 0}
 .bs .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bs .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -62,6 +66,7 @@ body.novideo .picture video{visibility:hidden}
   #cam{display:flex;flex-direction:column;overflow:auto}
   .picture{position:relative;inset:auto;width:100%;flex:0 1 auto;aspect-ratio:var(--ar,16/9);min-height:0}
   #expr{position:static;width:auto;margin:8px;flex:0 0 auto}
+  #perf{position:static;width:auto;max-width:none;margin:0 8px 8px;flex:0 0 auto}
   #hint{display:none}
 }
 body.oncamera #view3d{display:none}
@@ -113,6 +118,7 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
       <div class="chips"><span class="chip face" id="chipFace">face</span><span class="chip body" id="chipBody">body</span><span class="chip left" id="chipL">left hand</span><span class="chip right" id="chipR">right hand</span><span class="chip phone" id="chipPhone">phone</span></div>
     </div>
     <div id="expr"><h2 id="exprTitle">Expression</h2><div id="bsList"></div></div>
+    <div id="perf" title="What the machine does each second: main thread, recognition threads, video card"><h2 id="perfTitle">Performance</h2><div id="perfList"></div></div>
   </section>
   <section class="pane" id="view3d">
     <div id="avatarInfo" style="position:absolute;left:10px;top:10px;max-width:65%;font-size:12px;color:var(--muted);pointer-events:none">Select Character for the textured model</div>
@@ -127,15 +133,16 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
   "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
   "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs",
-  "./js/core.js": "./js/core.js?v=20260912-1314",
-  "./js/engines.js": "./js/engines.js?v=20260912-1314",
-  "./js/skeleton.js": "./js/skeleton.js?v=20260912-1314",
-  "./js/eyes.js": "./js/eyes.js?v=20260912-1314",
-  "./js/character.js": "./js/character.js?v=20260912-1314",
-  "./js/phone.js": "./js/phone.js?v=20260912-1314",
-  "./js/overlay.js": "./js/overlay.js?v=20260912-1314",
-  "./js/camera.js": "./js/camera.js?v=20260912-1314",
-  "./js/main.js": "./js/main.js?v=20260912-1314"
+  "./js/core.js": "./js/core.js?v=20260912-1322",
+  "./js/engines.js": "./js/engines.js?v=20260912-1322",
+  "./js/skeleton.js": "./js/skeleton.js?v=20260912-1322",
+  "./js/eyes.js": "./js/eyes.js?v=20260912-1322",
+  "./js/character.js": "./js/character.js?v=20260912-1322",
+  "./js/phone.js": "./js/phone.js?v=20260912-1322",
+  "./js/overlay.js": "./js/overlay.js?v=20260912-1322",
+  "./js/camera.js": "./js/camera.js?v=20260912-1322",
+  "./js/monitor.js": "./js/monitor.js?v=20260912-1322",
+  "./js/main.js": "./js/main.js?v=20260912-1322"
 } }
 </script>
 <!-- The code lives in js/ (what is where: CODE_MAP.md). Every module carries the same ?v= stamp through the import map above,
@@ -143,6 +150,6 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
 <script>
 if (location.protocol === 'file:') document.getElementById('loading').innerHTML = '<div class="box"><b>Open this page through an address</b><br><small>The browser does not load the page\'s modules from a file. Double-click open-local.cmd (a local address on this computer) or use the live address.</small></div>';
 </script>
-<script type="module" src="js/main.js?v=20260912-1314"></script>
+<script type="module" src="js/main.js?v=20260912-1322"></script>
 </body>
 </html>

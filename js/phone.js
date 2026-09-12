@@ -5,6 +5,7 @@ import { FilesetResolver, ObjectDetector } from '@mediapipe/tasks-vision';
 import { MPV, MODEL, $, video, ui, chips, state, note } from './core.js';
 import { bigFile, getFileset } from './engines.js';
 import { avatar, scene, isOverlay, handRig } from './skeleton.js';
+import { mon } from './monitor.js';
 
 // ---------------------------------------------------------------- a phone in the hand
 // When he films his reflection in a mirror, the character holds a phone. An object detector finds
@@ -30,10 +31,10 @@ const phoneWorkerSrc = "self.exports = {}; let ObjectDetector = null;\n" +
 "    return;\n" +
 "  }\n" +
 "  if (m.type === 'frame') {\n" +
-"    let boxes = [];\n" +
+"    let boxes = []; const t = performance.now();\n" +
 "    try { if (det) boxes = det.detect(m.bitmap).detections.map(d => ({ originX: d.boundingBox.originX, originY: d.boundingBox.originY, width: d.boundingBox.width, height: d.boundingBox.height, score: d.categories[0] ? d.categories[0].score : 0 })); }\n" +
 "    catch (err) { self.postMessage({ type: 'error', message: String((err && err.message) || err) }); }\n" +
-"    m.bitmap.close(); self.postMessage({ type: 'boxes', boxes });\n" +
+"    m.bitmap.close(); self.postMessage({ type: 'boxes', boxes, ms: performance.now() - t });\n" +
 "  }\n" +
 "};\n";
 async function ensurePhoneDetector() {
@@ -54,7 +55,7 @@ async function ensurePhoneDetector() {
       w.postMessage({ type: 'init', model: bufs[0], js: bufs[1], wasm: bufs[2], lib: bufs[3] }, bufs);
       phone.delegate = await ready; phone.worker = w;
       w.onmessage = e => {
-        if (e.data.type === 'boxes') { phone.busy = false; acceptBoxes(e.data.boxes, phone.lastHands); }
+        if (e.data.type === 'boxes') { phone.busy = false; mon.report('phone thread', e.data.ms || 0, { kind: 'thread', delegate: phone.delegate }); acceptBoxes(e.data.boxes, phone.lastHands); }
         else if (e.data.type === 'error') { console.warn('phone detector (worker):', e.data.message); phone.busy = false; }
       };
       w.onerror = e => { console.warn('phone worker died', e.message); phone.worker = null; phone.busy = false; };
@@ -76,8 +77,10 @@ function detectPhones(ts, hands) {   // every 4th frame, only in 'auto', only wh
     if (phone.busy) return; phone.busy = true;
     createImageBitmap(video).then(bm => phone.worker.postMessage({ type: 'frame', bitmap: bm }, [bm])).catch(() => { phone.busy = false; });
   } else if (phone.det) {
+    const t = performance.now();
     try { acceptBoxes(phone.det.detectForVideo(video, ts).detections.map(d => ({ originX: d.boundingBox.originX, originY: d.boundingBox.originY, width: d.boundingBox.width, height: d.boundingBox.height, score: d.categories[0] ? d.categories[0].score : 0 })), hands); }
     catch (e) { console.warn('phone detect failed', e); phone.det = null; }
+    mon.report('phone (main thread)', performance.now() - t, { kind: 'main', delegate: phone.delegate.split(' ')[0] });
   }
 }
 // A box counts for a hand only if: it is at least 50 % sure, it is shaped like a phone (long side 1.4-2.8 x

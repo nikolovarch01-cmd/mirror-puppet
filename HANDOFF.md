@@ -302,3 +302,18 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   `--harness eyes|overlay|phone`, `--all`, the static checks before Chrome and the code-map refresh after.
 - Rule for new code: a new top-level call from one module into another belongs in `main.js`'s start-up
   block, never at the top of a module (the modules load in a circle).
+
+## 2026-09-12 — the Performance panel (`js/monitor.js`), his ask "monitoring of the video card and the threads"
+
+- A panel under the picture (bottom-right on desktop, under the expression panel on phones), closed by default
+  with one summary line: `Performance ▸ main 4% · threads 1 of 12 · GPU ~0%`. Open: one row with a bar per
+  thread (`main`, `recognition (main thread) · GPU`, `phone thread · GPU`, later the recognition threads),
+  the GPU row with the card's name (WEBGL_debug_renderer_info, cleaned), the 3D draw time on the GPU when the
+  browser can time it (`EXT_disjoint_timer_query_webgl2`; "not timed here" otherwise), the core count
+  (`navigator.hardwareConcurrency`) and the JS memory (Chrome only).
+- Busy % = ms of work in the last second / 1000, so 100 − busy is the room left on that thread. A thread
+  calls `mon.report(name, ms, { kind: 'thread'|'main', delegate })` for each piece of work; `mon.tick(now)`
+  (from the loop, once a second) computes the percentages and redraws. The GPU share is an **estimate**: the
+  time of GPU-delegate recognition (which includes CPU pre/post-processing) plus the timed 3D draw; no
+  browser exposes real GPU utilisation. `window.mirrorPuppet.mon` for the tests; the desktop harness prints
+  the closed summary and the opened rows.

@@ -48,13 +48,20 @@ function synth(st) {
   // the modules must all arrive with the same ?v= stamp (import map) -- otherwise a phone can mix old and new files
   const mods = w.performance.getEntriesByType('resource').map(e => e.name).filter(n => /\/js\/[\w-]+\.js/.test(n)).map(n => n.split('/js/')[1]);
   const stamps = new Set(mods.map(n => (n.split('?v=')[1] || 'NONE')));
-  log('modules', mods.length, 'stamps', [...stamps].join(','), 'build', mp.build, 'label', w.document.getElementById('build').textContent, (mods.length === 9 && stamps.size === 1 && !stamps.has('NONE')) ? 'OK' : 'ERROR stamp mismatch');
+  const mapped = Object.keys(JSON.parse(w.document.querySelector('script[type=importmap]').textContent).imports).filter(k => k.startsWith('./js/')).length;
+  log('modules', mods.length, 'of', mapped, 'in the import map', 'stamps', [...stamps].join(','), 'build', mp.build, 'label', w.document.getElementById('build').textContent, (mods.length === mapped && stamps.size === 1 && !stamps.has('NONE')) ? 'OK' : 'ERROR stamp mismatch');
   mp.stopCamera();
   const res = synth(mp.state);
   for (let i = 0; i < 25; i++) { mp.present(res); await sleep(30); }
   const c = mp.canvases();
   const s = mp.scene; let visible = []; s.traverse(o => { if (o.visible && (o.isMesh || o.isLineSegments || o.isPoints)) visible.push(o.type); });
-  log('visible objects', visible.length, 'chips', [...w.document.querySelectorAll('.chip.on')].map(e => e.textContent).join(','), 'bars', [...w.document.querySelectorAll('.bs .n')].map(e => e.textContent).filter(Boolean).join(' | '));
+  log('visible objects', visible.length, 'chips', [...w.document.querySelectorAll('.chip.on')].map(e => e.textContent).join(','), 'bars', [...w.document.querySelectorAll('#bsList .bs .n')].map(e => e.textContent).filter(Boolean).join(' | '));
+  // the Performance panel: a summary line while closed, rows with bars when opened
+  await sleep(1100);
+  log('monitor closed:', w.document.getElementById('perfTitle').textContent, '| rows', [...mp.mon.rows.keys()].join(','), '| gpu', mp.mon.gpu.name || '-', '| timer query', mp.mon.gpu.ext ? 'yes' : 'no');
+  w.document.getElementById('perfTitle').click();
+  log('monitor open:', [...w.document.querySelectorAll('#perfList .bs')].map(e => e.children[0].textContent + ' = ' + e.children[1].textContent).join(' | '), (w.document.querySelectorAll('#perfList .bs').length >= 3 && mp.mon.rows.has('main')) ? 'OK' : 'ERROR monitor empty');
+  w.document.getElementById('perfTitle').click();
   mp.renderer.render(mp.scene, mp.camera);
   await post('three.png', c.three.toDataURL('image/png'));
   await post('overlay.png', c.overlay.toDataURL('image/png'));
