@@ -98,9 +98,12 @@ def static_checks():
     js = sorted(f for f in os.listdir(os.path.join(ROOT, "js")) if f.endswith(".js"))
     if node:
         for f in js:
-            r = subprocess.run([node, "--check", os.path.join(ROOT, "js", f)], capture_output=True, text=True)
+            # NOT `node --check file.js`: on a .js file that starts with `import`, Node 24 returns 0 without parsing it
+            # (found 2026-09-12 when a broken string passed). The file fed on stdin as a module is really parsed.
+            with open(os.path.join(ROOT, "js", f), "rb") as fh:
+                r = subprocess.run([node, "--input-type=module", "--check"], stdin=fh, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if r.returncode:
-                print("syntax error in js/%s:\n%s" % (f, (r.stderr or r.stdout).strip()))
+                print("syntax error in js/%s:\n%s" % (f, (r.stderr or r.stdout).strip().replace("[stdin]", "js/" + f)))
                 return False
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "modcheck.py")], capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode:

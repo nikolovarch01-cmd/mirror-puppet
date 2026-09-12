@@ -81,7 +81,7 @@ build step, no bundler. `tools/codemap.py` regenerates everything below the mark
 | `js/phone.js` | 185 | phone: the cell-phone detector in its own worker (fed with bytes from the local store), which hand holds, and the phone (his iPhone model, a slab until it loads) placed from the hand points in every view. |
 | `js/overlay.js` | 101 | 2D drawing: the skeleton over the camera picture (body, derived torso, hands with the phone rectangle, face mesh and contours) and the expression list under the picture. |
 | `js/camera.js` | 121 | camera and buttons: the camera stream (front / back, sizes, failures on a card), the picture size, mirror, the phone's one-view switch, the snapshot, and the header buttons. |
-| `js/monitor.js` | 107 | monitor: what the machine does each second — the main thread, every recognition thread, the video card — shown in the Performance panel (closed by default: one summary line; tap to open the rows with bars). Busy % of a thread = milliseconds it worked in the last second / 1000, so 100 − busy is the room left for more work on that thread. The GPU share is an estimate: the time of GPU-delegate recognition (which includes some CPU pre/post-processing) plus the measured draw time of the 3D view when the browser can time it (EXT_disjoint_timer_query_webgl2); no browser exposes a real GPU utilisation figure. |
+| `js/monitor.js` | 112 | monitor: what the machine does each second — the main thread, every recognition thread, the video card — shown in the Performance panel (closed by default: one summary line; tap to open the rows with bars). Busy % of a thread = milliseconds it worked in the last second / 1000, so 100 − busy is the room left for more work on that thread. The GPU share is an estimate: the time of GPU-delegate recognition (which includes some CPU pre/post-processing) plus the measured draw time of the 3D view when the browser can time it (EXT_disjoint_timer_query_webgl2); no browser exposes a real GPU utilisation figure. |
 | `js/main.js` | 84 | the loop: one frame (recognition → 2D drawing → puppet → character → phone), the status line, the console handle for the tests, and the start-up. The modules import each other in circles (a function defined in a later file is called from an earlier one). That is safe because no module touches another module's variables while the files are still loading: at load time each file only builds its own objects and points event handlers at functions; the calls come later. |
 | `mirror-puppet.html` | 159 | style, markup, import map + build stamp, the module tag |
 
@@ -440,11 +440,11 @@ monitor: what the machine does each second — the main thread, every recognitio
 
 - L10 `const` `KIND_ORDER`
 - L11 `const` `mon`
-- L91 `const` `resetGpu` — a lost context takes its queries and extensions with it
-- L92 `on` `renderer.domElement 'webglcontextlost'`
-- L93 `on` `renderer.domElement 'webglcontextrestored'`
-- L94 `fn` `initGpu()`
-- L106 `on` `$('perfTitle').onclick`
+- L96 `const` `resetGpu` — a lost context takes its queries and extensions with it
+- L97 `on` `renderer.domElement 'webglcontextlost'`
+- L98 `on` `renderer.domElement 'webglcontextrestored'`
+- L99 `fn` `initGpu()`
+- L111 `on` `$('perfTitle').onclick`
 
 ## `js/main.js`
 

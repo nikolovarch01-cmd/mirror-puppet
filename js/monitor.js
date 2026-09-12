@@ -48,10 +48,11 @@ const mon = {
   tick(now) {                           // once a second: percentages, the summary line, the panel
     const dt = Math.max(1, now - mon.at); mon.at = now;
     mon.gpuPoll();
-    let gpuInf = 0, gpuThreads = 0, threads = 0;
+    let gpuInf = 0, gpuThreads = 0, threads = 0, busy = 0;   // busy: ms of work in all our threads together -> how many cores' worth
     for (const [name, r] of mon.rows) {
       r.pct = Math.min(100, Math.round(r.acc * 100 / dt));
       if (r.kind === 'thread') threads++;
+      if (r.kind === 'thread' || name === 'main') busy += r.acc;   // the main row already holds the main thread's own recognition, if any
       // recognition on the video card: threads queue on the one card and overlap, so the slowest of them counts once;
       // work on the main thread adds to it
       if (r.delegate === 'GPU') { if (r.kind === 'thread') gpuThreads = Math.max(gpuThreads, r.acc); else gpuInf += r.acc; }
@@ -63,7 +64,10 @@ const mon = {
     mon.threads = threads;
     const gpuPct = Math.min(100, Math.round((gpuInf + render) * 100 / dt));
     const main = mon.rows.get('main');
-    const cores = 'threads ' + (threads + 1) + (mon.cores ? ' of ' + mon.cores : '');   // the main thread + the recognition threads, of the cores the browser reports
+    // which core runs which thread is the system's choice and no page can see it; what a page can say is how much work its
+    // own threads did, in cores' worth (one thread can fill at most one core), against the cores the browser reports
+    const worth = busy / dt; mon.coresBusy = worth;
+    const cores = '≈' + worth.toFixed(1) + (mon.cores ? ' of ' + mon.cores : '') + ' cores';
     mon.summary = (main ? 'main ' + main.pct + '%' : 'main –') + ' · ' + cores + (mon.gpu.name ? ' · GPU ~' + gpuPct + '%' : '');
     mon.gpuPct = gpuPct; mon.gpuRenderMs = render / (dt / 1000);
     const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : 0;
@@ -72,11 +76,12 @@ const mon = {
     if (!open) return;
     const rows = [...mon.rows].sort((a, b) => (KIND_ORDER[a[1].kind] - KIND_ORDER[b[1].kind]) || (a[1].order - b[1].order))
       .map(([name, r]) => ({ n: name + (r.delegate ? ' · ' + r.delegate : ''), v: r.pct + '% · ' + Math.round(r.last) + ' ms', pct: r.pct, kind: r.kind }));
+    rows.push({ n: 'work of our ' + (threads + 1) + ' threads, in cores', v: '≈' + worth.toFixed(1) + (mon.cores ? ' of ' + mon.cores : ''), pct: mon.cores ? Math.min(100, Math.round(worth * 100 / mon.cores)) : 0, kind: 'gpu' });
     if (mon.gpu.name) {
       rows.push({ n: 'GPU ~ ' + mon.gpu.name, v: '~' + gpuPct + '%', pct: gpuPct, kind: 'gpu' });
       rows.push({ n: mon.gpu.have ? '3D draw on the GPU' : '3D draw on the GPU · not timed here', v: mon.gpu.have ? Math.round(mon.gpuRenderMs) + ' ms/s' : '–', pct: mon.gpu.have ? Math.min(100, Math.round(render * 100 / dt)) : 0, kind: 'gpu' });
     }
-    rows.push({ n: 'cores (hardwareConcurrency)', v: mon.cores ? String(mon.cores) : 'unknown', pct: 0, kind: 'info' });
+    rows.push({ n: 'cores the browser reports · the system decides which thread runs where', v: mon.cores ? String(mon.cores) : 'unknown', pct: 0, kind: 'info' });
     if (mem) rows.push({ n: 'JS memory', v: mem + ' MB', pct: 0, kind: 'info' });
     const list = $('perfList');
     while (list.children.length < rows.length) { const row = document.createElement('div'); row.className = 'bs'; row.innerHTML = '<span class="n"></span><span class="v"></span><span class="b"><i></i></span>'; list.appendChild(row); }
