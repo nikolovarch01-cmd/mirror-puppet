@@ -15,6 +15,7 @@ const mon = {
   gpu: { name: '', ext: null, query: null, pending: [], acc: 0, have: false },   // pending: queries whose result is not back yet (a few frames)
   summary: '',
   threads: 0,
+  renders: 0, rendersPerSec: 0,   // how often the 3D view is drawn (on demand since 2026-09-12: about the fps, not 60)
   report(name, ms, opts) {              // add `ms` of work done by `name` (a thread, the main thread, or an info row)
     let r = mon.rows.get(name);
     if (!r) { r = { kind: (opts && opts.kind) || 'thread', delegate: '', acc: 0, last: 0, pct: 0, text: '', order: mon.rows.size, seen: 0 }; mon.rows.set(name, r); }
@@ -61,6 +62,7 @@ const mon = {
     }
     gpuInf += gpuThreads;
     const render = mon.gpu.have ? mon.gpu.acc : 0; mon.gpu.acc = 0;
+    mon.rendersPerSec = Math.round(mon.renders * 1000 / dt); mon.renders = 0;
     mon.threads = threads;
     const gpuPct = Math.min(100, Math.round((gpuInf + render) * 100 / dt));
     const main = mon.rows.get('main');
@@ -81,6 +83,7 @@ const mon = {
       rows.push({ n: 'GPU ~ ' + mon.gpu.name, v: '~' + gpuPct + '%', pct: gpuPct, kind: 'gpu' });
       rows.push({ n: mon.gpu.have ? '3D draw on the GPU' : '3D draw on the GPU · not timed here', v: mon.gpu.have ? Math.round(mon.gpuRenderMs) + ' ms/s' : '–', pct: mon.gpu.have ? Math.min(100, Math.round(render * 100 / dt)) : 0, kind: 'gpu' });
     }
+    rows.push({ n: '3D view drawn per second', v: mon.rendersPerSec + '/s', pct: 0, kind: 'info' });
     rows.push({ n: 'cores the browser reports · the system decides which thread runs where', v: mon.cores ? String(mon.cores) : 'unknown', pct: 0, kind: 'info' });
     if (mem) rows.push({ n: 'JS memory', v: mem + ' MB', pct: 0, kind: 'info' });
     const list = $('perfList');

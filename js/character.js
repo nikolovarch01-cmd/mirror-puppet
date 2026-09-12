@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { NF, BODY_JOINTS, $, ui, state, note, clamp, aspect, dImg } from './core.js';
 import { bigFile } from './engines.js';
 import { avatar, view, renderer, scene, isOverlay, controls, frontView, grid, body, handRig,
-  neck, clavL, clavR, spine, rootJoint, chinJoint, pelvisJoint, spineJoints, head, faceGroup, facePos, resize } from './skeleton.js';
+  neck, clavL, clavR, spine, rootJoint, chinJoint, pelvisJoint, spineJoints, head, faceGroup, facePos, resize, requestRender } from './skeleton.js';
 import { eyes, updateEyes } from './eyes.js';
 import { stopCamera } from './camera.js';
 import { present } from './main.js';
@@ -81,7 +81,7 @@ async function loadAvatar() {
     avatar.scale = 1.75 / box.getSize(new THREE.Vector3()).y;
     avatar.hip = restOf('Hip').p.clone();
     gltf.scene.position.sub(avatar.hip);
-    avatar.root = root; installRegionMask(root); resetAvatar(); root.visible = avatarUI.value !== 'skeleton';
+    avatar.root = root; installRegionMask(root); resetAvatar(); root.visible = avatarUI.value !== 'skeleton'; requestRender();
     document.body.classList.add('character-ready');
     avatarInfo.textContent = 'Body + fingers · face expressions later';
     if (avatar.last) present(avatar.last);
@@ -358,6 +358,7 @@ avatarUI.onchange = async () => {
   configureDisplay();
   if (avatarUI.value !== 'skeleton') { try { await loadAvatar(); } catch { return; } }
   if (avatar.root) avatar.root.visible = avatarUI.value !== 'skeleton';
+  requestRender();
   if (avatar.last) present(avatar.last);
   if (!isOverlay()) frontView();
 };

@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { $, video, overlay, octx, ui, chips, state, note } from './core.js';
 import { backend, wanted, useEngine, onDetectError } from './engines.js';
 import { avatar, view, renderer, scene, camera, overlayCamera, isOverlay, renderCamera, controls, handRig, sm,
-  updateBody, updateHand, updateFace, updateTorso, resize } from './skeleton.js';
+  updateBody, updateHand, updateFace, updateTorso, resize, requestRender, takeRender } from './skeleton.js';
 import { eyes } from './eyes.js';
 import { loadAvatar, updateAvatar, configureDisplay } from './character.js';
 import { phone, acceptBoxes, detectPhones, updatePhones } from './phone.js';
@@ -33,10 +33,11 @@ function present(res) {
   updateBlend(res.blend, hasFace);
   updateAvatar(res);
   updatePhones(res);
+  requestRender();   // a new pose: the 3D view is drawn on the next frame
 }
 
 // ---------------------------------------------------------------- loop
-let fps = 0, frames = 0, fpsAt = performance.now(), lastVT = -1, lastTs = 0;
+let fps = 0, frames = 0, fpsAt = performance.now(), lastVT = -1, lastTs = 0, renderedAt = 0;
 const perf = { detect: 0, draw: 0 };   // ms per frame: recognition, then drawing (smoothed)
 function setStatus(msg) {
   const engine = backend ? backend.label : (wanted ? 'loading model' : 'no engine · pick one in the menu');
@@ -63,9 +64,11 @@ function loop() {
   }
   const now = performance.now();
   if (now - fpsAt >= 1000) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; setStatus(); mon.tick(now); }
-  if (controls.enabled) controls.update();
-  if (isOverlay() || (view.clientWidth && view.clientHeight)) {
-    const r0 = performance.now(); mon.gpuBegin(); renderer.render(scene, renderCamera()); mon.gpuEnd();
+  const turned = controls.enabled && controls.update();   // true while a drag or its damping moves the 3D view
+  const wanted = takeRender();
+  if ((wanted || turned || now - renderedAt >= 1000) && (isOverlay() || (view.clientWidth && view.clientHeight))) {
+    renderedAt = now;
+    const r0 = performance.now(); mon.gpuBegin(); renderer.render(scene, renderCamera()); mon.gpuEnd(); mon.renders++;
     mon.report('main', performance.now() - r0, { kind: 'main' });
   }
 }

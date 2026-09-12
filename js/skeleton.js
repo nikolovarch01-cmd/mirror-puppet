@@ -23,6 +23,12 @@ const isOverlay = () => $('avatarMode').value === 'overlay';
 const renderCamera = () => isOverlay() ? overlayCamera : camera;
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistance = 0.3; controls.maxDistance = 8;
+// The 3D view is drawn only when something changed: a new pose (present), a turn of the view, a new size, a new
+// display, the character or the phone model arriving. Drawing 60 times a second the same picture cost the video
+// card the time it needed for recognition (his iPhone: 31 -> 10 fps). A safety draw once a second covers the rest.
+let renderWanted = true;
+const requestRender = () => { renderWanted = true; };
+const takeRender = () => { const w = renderWanted; renderWanted = false; return w; };
 function frontView() {
   if ($('avatarMode').value === 'character' && avatar.root) {
     avatar.root.updateMatrixWorld(true);
@@ -31,7 +37,7 @@ function frontView() {
     const distance=1.18*Math.max(size.y,size.x/ar)/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))+size.z/2;
     camera.position.set(center.x,center.y,center.z+distance);controls.target.copy(center);
   } else { camera.position.set(0,0.15,1.9);controls.target.set(0,.1,0); }
-  controls.update();
+  controls.update(); requestRender();
 }
 frontView();
 scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x1a2027, 1.6));
@@ -195,17 +201,17 @@ function resize() {
     const picture=document.querySelector('.picture'), W=picture.clientWidth,H=picture.clientHeight;
     if (!W || !H) return;
     const f=Math.min(W/state.W,H/state.H), w=state.W*f,h=state.H*f;
-    renderer.setSize(w,h,false);
+    renderer.setSize(w,h,false); requestRender();
     Object.assign(renderer.domElement.style,{left:(W-w)/2+'px',top:(H-h)/2+'px',width:w+'px',height:h+'px'});
     overlayCamera.top=aspect()/2;overlayCamera.bottom=-aspect()/2;overlayCamera.updateProjectionMatrix();
     return;
   }
   const w = view.clientWidth, h = view.clientHeight; if (!w || !h) return;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); requestRender();
 }
 new ResizeObserver(resize).observe(view);
 new ResizeObserver(resize).observe(document.querySelector('.picture')); resize();
 
 export { avatar, view, renderer, scene, camera, overlayCamera, isOverlay, renderCamera, controls, frontView, grid, body, handRig,
   neck, clavL, clavR, spine, rootJoint, chinJoint, pelvisJoint, spineJoints, head, faceGroup, facePos, sm, resetSmoothing,
-  updateBody, updateHand, updateFace, updateTorso, resize };
+  updateBody, updateHand, updateFace, updateTorso, resize, requestRender, takeRender };

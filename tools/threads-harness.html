@@ -24,6 +24,8 @@ async function until(cond, tries) { for (let i = 0; i < tries && !cond(); i++) a
   log('THREADS after 9 s: status', st, '| rows', rows(mp));
   const fps = +(st.match(/(\d+) fps/) || [0, 0])[1];
   log('THREADS results flowing: fps', fps, fps > 0 ? 'OK' : 'ERROR no frames presented');
+  // the 3D view is drawn on demand: about as often as a new pose arrives, never 60 times a second
+  log('THREADS 3D view drawn per second', mp.mon.rendersPerSec, 'at', fps, 'fps', (mp.mon.rendersPerSec <= fps + 4 && mp.mon.rendersPerSec >= 1) ? 'OK' : 'ERROR redraw rate is not tied to the pose rate');
   const missing = namesFor(N).filter(n => !mp.mon.rows.has(n));
   log('THREADS panel rows for the threads:', namesFor(N).length - missing.length, 'of', namesFor(N).length, missing.length ? 'ERROR missing ' + missing.join(', ') : 'OK');
   // Threads off: the engine is rebuilt on the main thread

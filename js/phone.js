@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { FilesetResolver, ObjectDetector } from '@mediapipe/tasks-vision';
 import { MPV, MODEL, $, video, ui, chips, state, note } from './core.js';
 import { bigFile, getFileset } from './engines.js';
-import { avatar, scene, isOverlay, handRig } from './skeleton.js';
+import { avatar, scene, isOverlay, handRig, requestRender } from './skeleton.js';
 import { mon } from './monitor.js';
 
 // ---------------------------------------------------------------- a phone in the hand
@@ -127,6 +127,7 @@ async function loadPhoneModel() {
     if (screen) { const sc = new THREE.Box3().setFromObject(screen).getCenter(new THREE.Vector3()), bc = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()); if (sc.z > bc.z) m.rotation.x += Math.PI; }
     phone.model = m;
     for (const side of ['L', 'R']) if (phone.meshes[side]) dressPhone(phone.meshes[side]);
+    requestRender();
   } catch (e) { console.warn('phone model failed, keeping the slab', e); }
   phone.modelLoading = false;
 }

@@ -392,5 +392,17 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   queue of queries (one per frame, read a few frames later) and resets on a lost context; the main-thread
   engines get an explicit canvas too; the two bottom boxes never overlap; the threads harness follows the
   machine's plan and flips the menu twice without waiting.
-- Not verified live: his laptop (RTX 3060, 12 cores → 3 threads) and his iPhone (reports 4 cores → 1 thread;
-  the Threads menu lets him compare 3 / 1 / off, and the panel rows give the numbers).
+- **His first live screenshots with threads (iPhone, 15:56):** 1 thread · GPU · 9–10 fps · 73–82 ms, main 6–8 %,
+  recognition thread 77–80 %, phone thread 16 % at 81 ms, GPU ~80 %, cores 4 — worse than the night before
+  (31 fps, 29 ms on the main thread). Cause agreed with him: with the main thread free, the 3D view was drawn
+  60 times a second (before, the synchronous detect throttled it to ~30) and the drawing competed with the
+  recognition on the one video card (the desktop timer showed the draw alone at ~240 ms/s = a quarter of the
+  GPU). His question "where does it say which core does what" — nowhere, no page can see it; the panel now
+  says how many cores' worth of work our threads do (≈1.0 of 4 on his shot) and that the system places them.
+- **Draw on demand (his „да направи го"):** the 3D view is rendered only when something changed — a new pose
+  (`present` → `requestRender`), a turn of the view (`controls.update()` returns true while a drag or its damping
+  moves the camera), a new size / display / character / phone model — plus one safety draw a second. The panel
+  shows "3D view drawn per second"; the threads harness checks it stays tied to the pose rate. Expected on his
+  iPhone: recognition back near 29 ms and ~30 fps; he judges live.
+- Not verified live: his laptop (RTX 3060, 12 cores → 3 threads) and the effect of drawing on demand on his iPhone
+  (the Threads menu lets him compare 3 / 1 / off, and the panel rows give the numbers).
