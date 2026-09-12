@@ -317,3 +317,30 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   time of GPU-delegate recognition (which includes CPU pre/post-processing) plus the timed 3D draw; no
   browser exposes real GPU utilisation. `window.mirrorPuppet.mon` for the tests; the desktop harness prints
   the closed summary and the opened rows.
+
+## 2026-09-12 — recognition in worker threads (`js/threads.js`), his ask "spread the work over threads"
+
+- Engine `threads:GPU` (menu "3 models · threads"; first in the automatic chain when the device allows it):
+  each of the three landmarkers runs in its own classic worker (the library, the wasm pair and the model handed
+  over as bytes from the local store, like the phone detector); with 2–3 cores one worker runs all three in
+  turn; without workers the main thread as before. `Threads` menu: auto (by `hardwareConcurrency`: ≥ 4 → 3,
+  ≥ 2 → 1, else main thread) / 3 / 1 / off — changing it rebuilds the engine.
+- The main thread gives every idle thread a copy of the frame (`createImageBitmap(video)`, transferred) and
+  draws with the newest results; `detect()` returns `null` when nothing new arrived. Hands are tied to the
+  body's wrists on the main thread (`assignHands`) from the newest hands and pose. Each thread measures its
+  own detect time and the loop shows the slowest thread's time in the status; the Performance panel shows a
+  row per thread (`face thread · GPU` …).
+- Each worker warms its landmarker up (one detection on a blank 64×64 image) before it reports ready: a cold
+  start compiles shaders for seconds, and the three threads used to do it at once on the first frame. GPU →
+  CPU fallback per landmarker inside the worker (a GPU failure at create or at the warm-up).
+- Headless numbers (SwiftShader, so indicative only): three threads at 30–40 ms each in parallel versus
+  36–49 ms for all three on the main thread; the main thread's busy share fell from 70–86 % to 2–3 %.
+  Camera-bound: the loop still runs one detection round per camera frame (20 fps fake camera).
+- **Found with the diag harness:** in headless Chrome the video capture service crashed while the worker GL
+  contexts were being created ("Detected crash of video capture service" in Chrome's log) and the camera
+  track ended silently; the page then stood still at 0 fps. `camera.js` now restarts a track the browser
+  ended (up to three times a minute, then a card). Whether the crash happens on a real machine is unknown;
+  the restart covers it either way.
+- Not verified live: his laptop (RTX 3060, 12 cores → 3 threads) and his iPhone (6 cores → 3 threads; GPU
+  contention between three contexts is the open question — the Threads menu lets him compare 3 / 1 / off, and
+  the panel rows give the numbers).

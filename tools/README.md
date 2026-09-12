@@ -130,3 +130,14 @@ Chrome command from section 1 with `http://127.0.0.1:8771/tools/<name>.html`; st
   `phone-*.png` and `phone-alone.png` (lights are hidden in that last render, so it is dark on purpose).
 
 All three set a 1280×720 synthetic size when the fake camera's first frame is 2×2.
+
+- `threads-harness.html` (`--harness threads`, also in `--all`) — recognition in worker threads: the automatic
+  engine picks three threads on this machine, results flow (fps > 0 on the fake camera), the Performance panel
+  has a row per thread, the Threads menu rebuilds the engine (off → main thread, 1 → one thread, auto → three).
+  It runs ~40 s (it waits for steady-state numbers).
+- `diag-harness.html` (`--harness diag`, not in `--all`) — asserts nothing: one line every half second with the
+  engine, the camera track, the frame loop and the threads, plus every media event of the `<video>` and every
+  assignment of its `srcObject` with a stack. Use it with `--fresh` to see a cold start (shader compilation).
+  Found with it on 2026-09-12: under headless SwiftShader a cold start of three GPU threads compiled shaders
+  for ~7 s and the fake camera's track **ended** meanwhile — hence the warm-up inside each thread before
+  "ready" and the automatic restart of an ended camera track in camera.js.

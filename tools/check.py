@@ -8,7 +8,7 @@ Windows Store `python3` stub, which prints "Python was not found".)
     py tools\\check.py --phone         390x844 window + iPhone user agent (adds ?phone for --avatar)
     py tools\\check.py --harness eyes  a feature harness: eyes | overlay | phone (tools/<name>-harness.html)
     py tools\\check.py --all           every check in a row: desktop, avatar, phone-size desktop, phone-size avatar,
-                                       eyes, overlay, phone -- one summary line each, exit 1 if any failed
+                                       eyes, overlay, phone, threads -- one summary line each, exit 1 if any failed
     py tools\\check.py --fresh         delete the persistent Chrome profile first (re-downloads the models)
     py tools\\check.py --keep          leave Chrome and the server running (prints their PIDs)
     py tools\\check.py --timeout 150
@@ -42,7 +42,7 @@ IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit
 DONE_MARKS = ("HARNESS DONE", "HARNESS ERROR", "AVATAR_DONE", "AVATAR_ERROR")
 OK_MARKS = ("HARNESS DONE", "AVATAR_DONE")
 ERROR_WORDS = ("Uncaught", "TypeError", "ReferenceError", "SyntaxError", "engine failed", "detect failed")
-HARNESSES = ("eyes", "overlay", "phone")
+HARNESSES = ("eyes", "overlay", "phone", "threads")
 # Chrome writes console lines as `[pid:tid:date:INFO:CONSOLE:4] "text", source: url (4)`;
 # older builds wrote `CONSOLE(4)]` -- both forms are stripped.
 CONSOLE_PREFIX = re.compile(r'^.*CONSOLE(?::\d+|\(\d+\))\] "')
@@ -183,7 +183,8 @@ def run(page, phone, fresh, keep, timeout, port, log):
             keep_line = True                              # continuation (stack trace) of a console line
             if '", source: ' in line:
                 in_msg = False
-        is_error = any(w in text for w in ERROR_WORDS) or "HARNESS ERROR" in text or "AVATAR_ERROR" in text
+        is_error = any(w in text for w in ERROR_WORDS) or "HARNESS ERROR" in text or "AVATAR_ERROR" in text \
+            or (is_console and text.startswith("HARNESS") and re.search(r"\bERROR\b", text) is not None)   # a harness line that says ERROR anywhere
         if is_error:
             errors.append(text)
             keep_line = True
@@ -230,7 +231,7 @@ def main():
     ap = argparse.ArgumentParser(description="headless check for Mirror Puppet")
     ap.add_argument("--avatar", action="store_true", help="run tools/avatar-harness.html")
     ap.add_argument("--phone", action="store_true", help="390x844 window + iPhone user agent")
-    ap.add_argument("--harness", choices=HARNESSES, help="a feature harness: tools/<name>-harness.html")
+    ap.add_argument("--harness", metavar="NAME", help="a feature harness: tools/<NAME>-harness.html (%s, or any other that exists)" % ", ".join(HARNESSES))
     ap.add_argument("--all", action="store_true", help="run every check in a row and print a summary")
     ap.add_argument("--fresh", action="store_true", help="delete the persistent profile first")
     ap.add_argument("--keep", action="store_true", help="leave Chrome and the server running")
@@ -245,6 +246,9 @@ def main():
 
     if not os.path.isfile(CHROME):
         print("Chrome not found:", CHROME)
+        return 2
+    if args.harness and not os.path.isfile(os.path.join(ROOT, "tools", args.harness + "-harness.html")):
+        print("no such harness: tools/%s-harness.html" % args.harness)
         return 2
     if not args.no_static and not static_checks():
         return 1

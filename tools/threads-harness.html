@@ -1,0 +1,44 @@
+<!doctype html><title>threads harness</title>
+<iframe id="f" src="/mirror-puppet.html" width="1300" height="720" allow="camera *; microphone *" style="border:0"></iframe>
+<script>
+// Recognition in worker threads: the automatic engine picks threads on this machine (12 cores), results flow
+// back (fps > 0 on the fake camera, empty results are still results), the Performance panel has a row per
+// thread with steady-state times after the shader warm-up, the Threads menu rebuilds the engine (off -> main
+// thread, 1 -> one thread with all three models, auto -> three threads).
+const log = (...a) => console.log('HARNESS', ...a);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const rows = mp => [...mp.mon.rows].map(([n, r]) => n + ' ' + r.pct + '% ' + Math.round(r.last) + ' ms').join(' | ');
+async function until(cond, tries) { for (let i = 0; i < tries && !cond(); i++) await sleep(250); return cond(); }
+(async () => {
+  const w = document.getElementById('f').contentWindow;
+  await until(() => w.mirrorPuppet && w.mirrorPuppet.backend, 240);
+  const mp = w.mirrorPuppet, b = mp.backend;
+  log('THREADS engine', b.key, '| label', b.label, '| threads', b.threads, '| workers', (b.workers || []).map(x => x.name + ':' + x.delegate + (x.gl ? ':gl' : ':no-gl')).join(', '), '| cores', mp.mon.cores,
+      b.key === 'threads:GPU' && b.threads === 3 ? 'OK' : 'ERROR expected three threads on the GPU');
+  await sleep(9000);   // the first detections of a GPU task compile shaders; read a steady second
+  const st = w.document.getElementById('status').textContent;
+  log('THREADS after 9 s: status', st, '| rows', rows(mp));
+  const fps = +(st.match(/(\d+) fps/) || [0, 0])[1];
+  log('THREADS results flowing: fps', fps, fps > 0 ? 'OK' : 'ERROR no frames presented');
+  const named = ['face thread', 'hands thread', 'body thread'].filter(n => mp.mon.rows.has(n));
+  log('THREADS panel rows for the threads:', named.length, named.length === 3 ? 'OK' : 'ERROR missing thread rows');
+  // Threads off: the engine is rebuilt on the main thread
+  const sel = w.document.getElementById('optThreads');
+  sel.value = '0'; sel.onchange();
+  await until(() => mp.backend && mp.backend.key === 'sep:GPU', 240);
+  log('THREADS off -> engine', mp.backend && mp.backend.key, mp.backend && mp.backend.key === 'sep:GPU' ? 'OK' : 'ERROR main-thread engine expected');
+  await sleep(2500);
+  log('THREADS main thread only:', w.document.getElementById('status').textContent, '| rows', rows(mp));
+  // one thread with all three models
+  sel.value = '1'; sel.onchange();
+  await until(() => mp.backend && mp.backend.key === 'threads:GPU' && mp.backend.threads === 1, 240);
+  log('THREADS 1 -> engine', mp.backend && mp.backend.label, mp.backend && mp.backend.threads === 1 ? 'OK' : 'ERROR one thread expected');
+  await sleep(6000);
+  log('THREADS one thread:', w.document.getElementById('status').textContent, '| rows', rows(mp));
+  // back to automatic
+  sel.value = 'auto'; sel.onchange();
+  await until(() => mp.backend && mp.backend.threads === 3, 240);
+  log('THREADS auto -> engine', mp.backend && mp.backend.label, mp.backend && mp.backend.threads === 3 ? 'OK' : 'ERROR three threads expected');
+  log('DONE');
+})().catch(e => log('ERROR', String(e), e && e.stack));
+</script>

@@ -7,7 +7,7 @@ import { avatarUI } from './character.js';
 import { setStatus } from './main.js';
 
 // ---------------------------------------------------------------- camera
-let stream = null, currentDeviceId = undefined, currentFacing = 'user';
+let stream = null, currentDeviceId = undefined, currentFacing = 'user', restarts = [];   // restarts: when the browser ended a track and we started again
 window.addEventListener('orientationchange', () => { if (IS_MOBILE && state.running) setTimeout(() => startCamera(currentDeviceId), 400); });
 async function startCamera(deviceId, facing) {
   stopCamera();
@@ -36,6 +36,16 @@ async function startCamera(deviceId, facing) {
   const back = st.facingMode === 'environment' || (!st.facingMode && /back|rear|environment/i.test(track.label || ''));
   currentFacing = back ? 'environment' : 'user';
   setMirror(!back);
+  // a track the browser ends on its own (the app went to the background, the device was taken away, Chrome's
+  // capture service crashed): start again, up to three times a minute; after that the card
+  const mine = stream;
+  track.onended = () => {
+    if (!state.running || video.srcObject !== mine) return;
+    const now = performance.now();
+    restarts = restarts.filter(t => now - t < 60000);
+    if (restarts.length < 3) { restarts.push(now); note('the camera stopped, starting it again'); setTimeout(() => { if (video.srcObject === mine) startCamera(deviceId, facing); }, 300); }
+    else { stopCamera(); showCard('The camera keeps stopping', 'the browser ended the camera stream three times in a minute', [{ label: 'Try again', primary: true, onClick: () => startCamera(deviceId, facing) }, { label: 'Close' }]); }
+  };
   video.srcObject = stream;
   try { await video.play(); }
   catch (e) { showCard('Tap to start the camera', '', [{ label: 'Start', primary: true, onClick: () => video.play().catch(err => note('camera did not start: ' + err.name)) }]); }

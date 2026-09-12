@@ -14,7 +14,7 @@ import os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS = os.path.join(ROOT, "js")
 OUT = os.path.join(ROOT, "CODE_MAP.md")
-ORDER = ["core", "engines", "skeleton", "eyes", "character", "phone", "overlay", "camera", "monitor", "main"]
+ORDER = ["core", "engines", "threads", "skeleton", "eyes", "character", "phone", "overlay", "camera", "monitor", "main"]
 HAND_START, HAND_END = "<!-- hand-written: start -->", "<!-- hand-written: end -->"
 DEFAULT_HAND = """# Mirror Puppet — code map
 

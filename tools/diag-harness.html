@@ -1,0 +1,34 @@
+<!doctype html><title>diag harness</title>
+<iframe id="f" src="/mirror-puppet.html" width="1300" height="720" allow="camera *; microphone *" style="border:0"></iframe>
+<script>
+// A watch on the running page: engine, camera state, the frame loop, the threads; every media event of the
+// <video> and every assignment of its srcObject (with a stack). For diagnosis only
+// (py tools\check.py --harness diag [--fresh]); it asserts nothing. v3: watches the track's ended/mute events.
+const log = (...a) => console.log('HARNESS', ...a);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => {
+  const w = document.getElementById('f').contentWindow;
+  const t0 = performance.now(), T = () => ((performance.now() - t0) / 1000).toFixed(2) + 's';
+  for (let i = 0; i < 400 && !(w.mirrorPuppet); i++) await sleep(50);
+  const mp = w.mirrorPuppet, v = w.document.getElementById('video');
+  const d = Object.getOwnPropertyDescriptor(w.HTMLMediaElement.prototype, 'srcObject');
+  Object.defineProperty(w.HTMLMediaElement.prototype, 'srcObject', { configurable: true, get: d.get,
+    set(s) { log('DIAG', T(), 'srcObject =', s ? 'stream ' + s.id.slice(0, 8) : 'null', '| stack', new Error().stack.split('\n').slice(2, 6).join(' <- ').replace(/https?:\/\/[^ ]*\/js\//g, '')); return d.set.call(this, s); } });
+  for (const ev of ['emptied', 'loadstart', 'loadedmetadata', 'playing', 'pause', 'ended', 'stalled', 'waiting', 'suspend', 'abort', 'error', 'resize'])
+    v.addEventListener(ev, () => log('DIAG', T(), 'video event', ev, 'ct', v.currentTime.toFixed(2), v.videoWidth + 'x' + v.videoHeight));
+  const watchTrack = () => { const tr = v.srcObject && v.srcObject.getVideoTracks()[0]; if (tr && !tr.__w) { tr.__w = 1; tr.addEventListener('ended', () => log('DIAG', T(), 'TRACK ENDED', v.srcObject && v.srcObject.id.slice(0, 8))); tr.addEventListener('mute', () => log('DIAG', T(), 'track muted')); tr.addEventListener('unmute', () => log('DIAG', T(), 'track unmuted')); } };
+  watchTrack(); v.addEventListener('loadedmetadata', watchTrack);
+  const raf = w.requestAnimationFrame; w.__raf = 0; w.requestAnimationFrame = f => { w.__raf++; return raf.call(w, f); };
+  const line = () => {
+    const b = mp.backend, tr = v.srcObject && v.srcObject.getVideoTracks()[0];
+    log('DIAG', T(), '| engine', b && b.key, '| running', mp.state.running, '| video', v.videoWidth + 'x' + v.videoHeight, 'rs', v.readyState, 'paused', v.paused, 'ct', v.currentTime.toFixed(2),
+        '| track', tr ? tr.readyState + ' ' + (tr.muted ? 'muted' : 'live') + ' ' + v.srcObject.id.slice(0, 8) : 'none', '| raf', w.__raf,
+        '| status', w.document.getElementById('status').textContent,
+        '| rows', [...mp.mon.rows].map(([n, r]) => n + ' ' + r.pct + '% ' + Math.round(r.last) + 'ms').join(', '),
+        '| busy', ((b && b.workers) || []).map(x => x.busy).join(','));
+  };
+  for (let i = 0; i < 600 && !mp.backend; i++) { if (i % 20 === 0) line(); await sleep(200); }
+  for (let i = 0; i < 24; i++) { line(); await sleep(500); }
+  log('DONE');
+})().catch(e => log('ERROR', String(e), e && e.stack));
+</script>

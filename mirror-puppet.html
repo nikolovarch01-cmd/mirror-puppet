@@ -96,11 +96,14 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
   <label>Smoothing <input type="range" id="optSmooth" min="0" max="90" value="50"></label>
   <label>Engine <select id="optEngine">
     <option value="auto">automatic</option>
+    <option value="threads:GPU">3 models · threads</option>
     <option value="sep:GPU">3 models · GPU</option>
     <option value="holistic:GPU">combined · GPU</option>
     <option value="sep:CPU">3 models · CPU</option>
+    <option value="threads:CPU">3 models · threads · CPU</option>
     <option value="holistic:CPU">combined · CPU</option>
   </select></label>
+  <label title="Recognition in worker threads: auto picks by the core count; off = everything on the main thread">Threads <select id="optThreads"><option value="auto" selected>auto</option><option value="3">3</option><option value="1">1</option><option value="0">off</option></select></label>
   <label>Display <select id="avatarMode"><option value="overlay" selected>On camera</option><option value="character">Character 3D</option><option value="skeleton">Skeleton</option></select></label>
   <label><input type="checkbox" id="optGuides"> Guides on camera</label>
   <label>Phone <select id="optPhone" title="A phone in the hand: found automatically, or forced"><option value="auto" selected>auto</option><option value="L">left hand</option><option value="R">right hand</option><option value="off">off</option></select></label>
@@ -133,16 +136,17 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
   "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
   "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs",
-  "./js/core.js": "./js/core.js?v=20260912-1322",
-  "./js/engines.js": "./js/engines.js?v=20260912-1322",
-  "./js/skeleton.js": "./js/skeleton.js?v=20260912-1322",
-  "./js/eyes.js": "./js/eyes.js?v=20260912-1322",
-  "./js/character.js": "./js/character.js?v=20260912-1322",
-  "./js/phone.js": "./js/phone.js?v=20260912-1322",
-  "./js/overlay.js": "./js/overlay.js?v=20260912-1322",
-  "./js/camera.js": "./js/camera.js?v=20260912-1322",
-  "./js/monitor.js": "./js/monitor.js?v=20260912-1322",
-  "./js/main.js": "./js/main.js?v=20260912-1322"
+  "./js/core.js": "./js/core.js?v=20260912-1345",
+  "./js/engines.js": "./js/engines.js?v=20260912-1345",
+  "./js/skeleton.js": "./js/skeleton.js?v=20260912-1345",
+  "./js/eyes.js": "./js/eyes.js?v=20260912-1345",
+  "./js/character.js": "./js/character.js?v=20260912-1345",
+  "./js/phone.js": "./js/phone.js?v=20260912-1345",
+  "./js/overlay.js": "./js/overlay.js?v=20260912-1345",
+  "./js/camera.js": "./js/camera.js?v=20260912-1345",
+  "./js/threads.js": "./js/threads.js?v=20260912-1345",
+  "./js/monitor.js": "./js/monitor.js?v=20260912-1345",
+  "./js/main.js": "./js/main.js?v=20260912-1345"
 } }
 </script>
 <!-- The code lives in js/ (what is where: CODE_MAP.md). Every module carries the same ?v= stamp through the import map above,
@@ -150,6 +154,6 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
 <script>
 if (location.protocol === 'file:') document.getElementById('loading').innerHTML = '<div class="box"><b>Open this page through an address</b><br><small>The browser does not load the page\'s modules from a file. Double-click open-local.cmd (a local address on this computer) or use the live address.</small></div>';
 </script>
-<script type="module" src="js/main.js?v=20260912-1322"></script>
+<script type="module" src="js/main.js?v=20260912-1345"></script>
 </body>
 </html>

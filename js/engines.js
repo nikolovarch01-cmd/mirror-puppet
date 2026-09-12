@@ -6,6 +6,7 @@ import { MPV, MODEL, UA, $, ui, dImg } from './core.js';
 import { resetSmoothing } from './skeleton.js';
 import { ensurePhoneDetector } from './phone.js';
 import { setStatus } from './main.js';
+import { threadPlan, createThreadedBackend } from './threads.js';
 
 // ---------------------------------------------------------------- recognition engines
 // Every engine returns the same shape: { face, blend, pose, poseWorld, hands:[{side:'L'|'R', attached, img, world}] }
@@ -63,6 +64,7 @@ async function getFileset() {
 
 async function createBackend(key) {
   const [kind, delegate] = key.split(':');
+  if (kind === 'threads') return createThreadedBackend(delegate);   // recognition in worker threads (threads.js)
   const fs = await getFileset();
   if (kind === 'holistic') {
     // On the GPU the expression part of the combined model fails ("No support of const"),
@@ -145,7 +147,8 @@ function assignHands(hands, pose) {
 }
 
 // ---------------------------------------------------------------- engine management
-const CHAIN = ['sep:GPU', 'sep:CPU', 'holistic:CPU'];   // what "automatic" tries, in order
+const CHAIN = ['threads:GPU', 'sep:GPU', 'threads:CPU', 'sep:CPU', 'holistic:CPU'];   // what "automatic" tries, in order
+const engineChain = () => threadPlan() ? CHAIN : CHAIN.filter(k => !k.startsWith('threads'));   // no threads on this device: skip them
 let backend = null, chainPos = 0, wanted = null;
 function showLoading(html, kind) {
   ui.loading.dataset.kind = kind || 'loading';
@@ -162,9 +165,9 @@ function showError(title, e) {
   const reason = String((e && e.message) || e || '').split('===')[0].replace(/\s+/g, ' ').trim().slice(0, 160);
   showCard(title, reason, [{ label: 'Back to automatic', primary: true, onClick: () => { ui.engine.value = 'auto'; chainPos = 0; useEngine('auto'); } }, { label: 'Close' }]);
 }
-async function useEngine(sel) {
-  const key = sel === 'auto' ? CHAIN[chainPos] : sel;
-  if (backend && backend.key === key) { ui.loading.classList.add('hidden'); return; }
+async function useEngine(sel, rebuild) {   // rebuild: the same key again (a new thread plan)
+  const key = sel === 'auto' ? engineChain()[Math.min(chainPos, engineChain().length - 1)] : sel;
+  if (backend && backend.key === key && !rebuild) { ui.loading.classList.add('hidden'); return; }
   wanted = key;
   showLoading('Loading the recognition models…<br><small id="prog">checking this device</small>');
   const old = backend; backend = null; if (old) old.close();
@@ -179,20 +182,21 @@ async function useEngine(sel) {
     }
     console.log('files from the local store:', dl.fromStore, '| downloaded MB:', (dl.done / 1e6).toFixed(1));
     if (wanted !== key) { b.close(); return; }
-    backend = b; wanted = null; resetSmoothing(); if (ui.loading.dataset.kind !== 'card') ui.loading.classList.add('hidden'); setStatus();
+    backend = b; wanted = null; b.onError = onDetectError; resetSmoothing(); if (ui.loading.dataset.kind !== 'card') ui.loading.classList.add('hidden'); setStatus();
     if ($('optPhone').value === 'auto') ensurePhoneDetector();
   } catch (e) {
     console.error('engine failed', key, e);
-    if (sel === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; return useEngine('auto'); }
+    if (sel === 'auto' && chainPos < engineChain().length - 1) { chainPos++; return useEngine('auto'); }
     wanted = null; showError('This engine did not start', e); setStatus();
   }
 }
 function onDetectError(e) {
   console.error('detect failed', backend && backend.key, e);
   const old = backend; backend = null; if (old) try { old.close(); } catch {}
-  if (ui.engine.value === 'auto' && chainPos < CHAIN.length - 1) { chainPos++; useEngine('auto'); }
+  if (ui.engine.value === 'auto' && chainPos < engineChain().length - 1) { chainPos++; useEngine('auto'); }
   else { showError('Recognition stopped', e); setStatus(); }
 }
 ui.engine.onchange = () => { chainPos = 0; useEngine(ui.engine.value); };
+$('optThreads').onchange = () => { chainPos = 0; useEngine(ui.engine.value, true); };   // a different thread plan: the engine is rebuilt
 
 export { bigFile, getFileset, dl, createBackend, assignHands, backend, wanted, showLoading, showCard, showError, useEngine, onDetectError };

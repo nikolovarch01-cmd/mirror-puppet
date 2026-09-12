@@ -56,6 +56,7 @@ function loop() {
     if (res) { try { present(res); frames++; } catch (e) { console.error('present failed', e); note('draw error: ' + String((e && e.message) || e).slice(0, 80)); } }
     const t2 = performance.now();
     perf.detect += (t1 - t0 - perf.detect) * 0.1; perf.draw += (t2 - t1 - perf.draw) * 0.1;
+    if (backend && backend.threads) perf.detect = backend.ms;   // with threads the recognition time is the slowest thread's, not the hand-off
     mon.report('main', t2 - t0, { kind: 'main' });
     if (backend && !backend.threads) mon.report('recognition (main thread)', t1 - t0, { kind: 'main', delegate: backend.key.split(':')[1] });
   }
