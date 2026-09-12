@@ -4,7 +4,7 @@ Run:  py serve-https.py          (or double-click start-for-phone.cmd)
 Then on the phone, on the same Wi-Fi, open the address that is printed.
 The phone will warn about the certificate once (it is self-signed) - tap "Advanced" / "Proceed".
 """
-import http.server, ssl, socket, os, subprocess, sys
+import http.server, re, ssl, socket, os, subprocess, sys
 
 PORT = 8443
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,8 +63,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Location", "/" + PAGE)
             self.end_headers()
             return True
-        # only the page itself is served, never the key or the folder listing
-        if self.path.split("?")[0] != "/" + PAGE:
+        # only the page, its modules (js/) and its models (assets/) are served -- never the key, the tools or a folder listing
+        path = self.path.split("?")[0]
+        if path != "/" + PAGE and not re.fullmatch(r"/js/[\w-]+\.js", path) and not re.fullmatch(r"/assets/[\w.-]+", path):
             self.send_error(404)
             return True
         return False

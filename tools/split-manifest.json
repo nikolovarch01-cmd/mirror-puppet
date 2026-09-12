@@ -1,0 +1,108 @@
+{
+ "core.js": {
+  "ranges": [
+   [
+    137,
+    224
+   ]
+  ],
+  "header": 5,
+  "footer": 2
+ },
+ "engines.js": {
+  "ranges": [
+   [
+    225,
+    361
+   ],
+   [
+    1257,
+    1307
+   ]
+  ],
+  "header": 9,
+  "footer": 1
+ },
+ "skeleton.js": {
+  "ranges": [
+   [
+    362,
+    545
+   ],
+   [
+    1403,
+    1418
+   ]
+  ],
+  "header": 8,
+  "footer": 3
+ },
+ "character.js": {
+  "ranges": [
+   [
+    546,
+    579
+   ],
+   [
+    647,
+    970
+   ]
+  ],
+  "header": 12,
+  "footer": 1
+ },
+ "eyes.js": {
+  "ranges": [
+   [
+    580,
+    646
+   ]
+  ],
+  "header": 7,
+  "footer": 1
+ },
+ "phone.js": {
+  "ranges": [
+   [
+    971,
+    1143
+   ]
+  ],
+  "header": 8,
+  "footer": 1
+ },
+ "overlay.js": {
+  "ranges": [
+   [
+    1144,
+    1237
+   ]
+  ],
+  "header": 6,
+  "footer": 1
+ },
+ "camera.js": {
+  "ranges": [
+   [
+    1308,
+    1402
+   ]
+  ],
+  "header": 8,
+  "footer": 1
+ },
+ "main.js": {
+  "ranges": [
+   [
+    1238,
+    1256
+   ],
+   [
+    1419,
+    1454
+   ]
+  ],
+  "header": 16,
+  "footer": 5
+ }
+}

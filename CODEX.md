@@ -10,7 +10,9 @@ coordinate system, the verified facts and the traps; do not rediscover them by t
 
 Rules that hold for every change:
 
-1. `mirror-puppet.html` stays a single dependency-free file with the pinned CDN versions; no build step.
+1. The code is in `js/`, one ES module per section (`CODE_MAP.md` says what is where), loaded by
+   `mirror-puppet.html` through the import map with the pinned CDN versions; no build step, no bundler.
+   After a change run `py tools\check.py --all`; before a push run `py tools\stamp.py`.
 2. UI text is English. The owner reads Bulgarian and does not read code — report to him in short plain
    sentences, no code in the text.
 3. On phones: one view at a time, never crop the camera picture, expression panel closed by default.

@@ -25,9 +25,27 @@ The server sends `Cache-Control: no-store`, so the page itself is never stale �
 the profile after editing the page.
 
 Flags: `--avatar` runs `avatar-harness.html` (section 5, expects `AVATAR_DONE`); `--phone` uses a
-390x844 window and the iPhone user agent (adds `?phone` for `--avatar`); `--fresh` deletes the profile
-first; `--keep` leaves Chrome and the server running and prints their PIDs; `--timeout N`; `--port N`
-(preferred server port); `--log FILE` saves Chrome's full stderr for a closer look.
+390x844 window and the iPhone user agent (adds `?phone` for `--avatar`); `--harness eyes|overlay|phone`
+runs one of the feature harnesses (section 6); **`--all` runs everything in a row** (desktop, avatar,
+phone-size desktop, phone-size avatar, eyes, overlay, phone — about 40 s, one summary line each, exit 1
+if any failed); `--fresh` deletes the profile first; `--keep` leaves Chrome and the server running and
+prints their PIDs; `--timeout N`; `--port N` (preferred server port); `--log FILE` saves Chrome's full
+stderr for a closer look.
+
+Before Chrome, every run syntax-checks the `js/` modules with node (Node 24 is installed) and runs
+`tools\modcheck.py` (imports/exports between the modules; a name used from another module without an
+import is a PROBLEM; the check is approximate — a local variable named like another module's top-level
+name shows as a false positive). `--no-static` skips that. After Chrome, `tools\codemap.py` rewrites
+`CODE_MAP.md` from the code so the map never lags (`--no-map` skips it; `py tools\codemap.py --check`
+tells whether it is behind).
+
+The desktop harness also verifies that all nine modules arrived with one and the same `?v=` build stamp
+through the import map (`HARNESS modules 9 stamps … OK`). Before a push run **`py tools\stamp.py`** —
+it renews the stamp in the page; `--show` prints it, `--check` complains when a js file is newer than the
+stamp. `open-local.cmd` (→ `tools\open_local.py`) serves the folder on 127.0.0.1:8770 and opens the page
+in the default browser — the way to open the page on this computer now that it is split into modules
+(file:// cannot load them). `tools\split-manifest.json` records which lines of the pre-split page
+(commit af5f262) became which module.
 
 ## 1. Desktop harness — load, detect on a fake camera, render a synthetic figure
 
@@ -96,10 +114,11 @@ performance benchmark. Face and eye deformation is deliberately not implemented 
 
 ## 6. Feature harnesses (eyes, on-camera mode, phone)
 
-`check.py` runs only `harness.html` and `avatar-harness.html`. Three more pages cover the later features;
-run them the same way against the warm profile (`%TEMP%\mirror-puppet-check-profile`) with a server on
-another port, e.g. `py tools\testsrv.py 8771` and the Chrome command from section 1 with
-`http://127.0.0.1:8771/tools/<name>.html`; stop Chrome when `HARNESS DONE` prints (timeout 150 s):
+Three more pages cover the later features: `py tools\check.py --harness eyes` (or `overlay`, `phone`)
+runs one; `--all` runs them after the two main harnesses. By hand: the warm profile
+(`%TEMP%\mirror-puppet-check-profile`), a server on another port, e.g. `py tools\testsrv.py 8771`, and the
+Chrome command from section 1 with `http://127.0.0.1:8771/tools/<name>.html`; stop Chrome when
+`HARNESS DONE` prints (timeout 150 s):
 
 - `eyes-harness.html` — eyeballs built on the eye bones, gaze right / up / straight (landmark path,
   `res.blend` is nulled on purpose), head close-up renders `eyes.png` / `eyes-near.png` / `eyes-only.png`.

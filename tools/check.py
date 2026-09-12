@@ -3,18 +3,25 @@
 (No shebang on purpose: the py launcher would follow `#!/usr/bin/env python3` to the
 Windows Store `python3` stub, which prints "Python was not found".)
 
-    py tools\\check.py            desktop harness (tools/harness.html)
-    py tools\\check.py --avatar   character/rig harness (tools/avatar-harness.html)
-    py tools\\check.py --phone    390x844 window + iPhone user agent (adds ?phone for --avatar)
-    py tools\\check.py --fresh    delete the persistent Chrome profile first (re-downloads the models)
-    py tools\\check.py --keep     leave Chrome and the server running (prints their PIDs)
+    py tools\\check.py                 desktop harness (tools/harness.html)
+    py tools\\check.py --avatar        character/rig harness (tools/avatar-harness.html)
+    py tools\\check.py --phone         390x844 window + iPhone user agent (adds ?phone for --avatar)
+    py tools\\check.py --harness eyes  a feature harness: eyes | overlay | phone (tools/<name>-harness.html)
+    py tools\\check.py --all           every check in a row: desktop, avatar, phone-size desktop, phone-size avatar,
+                                       eyes, overlay, phone -- one summary line each, exit 1 if any failed
+    py tools\\check.py --fresh         delete the persistent Chrome profile first (re-downloads the models)
+    py tools\\check.py --keep          leave Chrome and the server running (prints their PIDs)
     py tools\\check.py --timeout 150
+
+Before the browser: every js/ module is syntax-checked with node (when node is installed) and
+tools/modcheck.py verifies the imports/exports between the modules; a failure there stops the run.
+After the browser: tools/codemap.py refreshes CODE_MAP.md so the map never lags behind the code.
 
 Starts tools/testsrv.py on a free port serving the repo root, runs headless Chrome with a
 fake camera against the harness page, reads Chrome's stderr live and stops as soon as the
 harness prints DONE or ERROR. The profile %TEMP%\\mirror-puppet-check-profile is kept between
 runs so the page's IndexedDB store keeps the models (~33 MB): the second run must print
-"files from the local store: 5". PNGs posted by the harness land in the repo root.
+"files from the local store: 6". PNGs posted by the harness land in the repo root.
 Exit code 0 only if DONE was reached and no error line appeared.
 """
 import argparse
@@ -35,6 +42,7 @@ IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit
 DONE_MARKS = ("HARNESS DONE", "HARNESS ERROR", "AVATAR_DONE", "AVATAR_ERROR")
 OK_MARKS = ("HARNESS DONE", "AVATAR_DONE")
 ERROR_WORDS = ("Uncaught", "TypeError", "ReferenceError", "SyntaxError", "engine failed", "detect failed")
+HARNESSES = ("eyes", "overlay", "phone")
 # Chrome writes console lines as `[pid:tid:date:INFO:CONSOLE:4] "text", source: url (4)`;
 # older builds wrote `CONSOLE(4)]` -- both forms are stripped.
 CONSOLE_PREFIX = re.compile(r'^.*CONSOLE(?::\d+|\(\d+\))\] "')
@@ -84,30 +92,32 @@ def strip_console(line):
     return CONSOLE_SUFFIX.sub("", CONSOLE_PREFIX.sub("", line))
 
 
-def main():
-    ap = argparse.ArgumentParser(description="headless check for Mirror Puppet")
-    ap.add_argument("--avatar", action="store_true", help="run tools/avatar-harness.html")
-    ap.add_argument("--phone", action="store_true", help="390x844 window + iPhone user agent")
-    ap.add_argument("--fresh", action="store_true", help="delete the persistent profile first")
-    ap.add_argument("--keep", action="store_true", help="leave Chrome and the server running")
-    ap.add_argument("--timeout", type=float, default=150, help="seconds to wait for DONE (default 150)")
-    ap.add_argument("--port", type=int, default=8765, help="preferred server port (default 8765)")
-    ap.add_argument("--log", metavar="FILE", help="also write Chrome's full stderr to FILE")
-    args = ap.parse_args()
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")    # status text has "·" and "×"; never die on the console codepage
+def static_checks():
+    """node --check on every module (if node exists) and tools/modcheck.py. Returns True when clean."""
+    node = shutil.which("node")
+    js = sorted(f for f in os.listdir(os.path.join(ROOT, "js")) if f.endswith(".js"))
+    if node:
+        for f in js:
+            r = subprocess.run([node, "--check", os.path.join(ROOT, "js", f)], capture_output=True, text=True)
+            if r.returncode:
+                print("syntax error in js/%s:\n%s" % (f, (r.stderr or r.stdout).strip()))
+                return False
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "modcheck.py")], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode:
+        print(r.stdout.strip())
+        return False
+    notes = [l for l in r.stdout.splitlines() if l.startswith("note:")]
+    print("static: %d modules parsed%s, imports/exports consistent%s" % (
+        len(js), " by node" if node else " (node not found, syntax not checked)", "" if not notes else "; " + "; ".join(notes)))
+    return True
 
-    if not os.path.isfile(CHROME):
-        print("Chrome not found:", CHROME)
-        return 2
-    if args.fresh:
+
+def run(page, phone, fresh, keep, timeout, port, log):
+    """One headless run. Returns (status, elapsed, done_at, errors, saved)."""
+    if fresh:
         shutil.rmtree(PROFILE, ignore_errors=True)
     warm = os.path.isdir(os.path.join(PROFILE, "Default"))
-
-    page = "tools/avatar-harness.html" if args.avatar else "tools/harness.html"
-    if args.avatar and args.phone:
-        page += "?phone"
-    port = free_port(args.port)
+    port = free_port(port)
     url = "http://127.0.0.1:%d/%s" % (port, page)
 
     t0 = time.time()
@@ -120,13 +130,13 @@ def main():
     try:
         if not wait_port(port):
             print("server did not start on port", port)
-            return 2
-        width, height = (390, 844) if args.phone else (1400, 800)
+            return "FAIL", 0, None, ["server did not start"], []
+        width, height = (390, 844) if phone else (1400, 800)
         cmd = [CHROME, "--headless=new", "--no-first-run", "--window-size=%d,%d" % (width, height),
                "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
                "--autoplay-policy=no-user-gesture-required", "--enable-unsafe-swiftshader",
                "--enable-logging=stderr", "--v=0", "--user-data-dir=" + PROFILE]
-        if args.phone:
+        if phone:
             cmd.append("--user-agent=" + IPHONE_UA)
         cmd.append(url)
         print("check: %s  port %d  window %dx%d  profile %s (%s)" % (
@@ -143,11 +153,11 @@ def main():
             done.set()
 
         threading.Thread(target=reader, daemon=True).start()
-        finished = done.wait(args.timeout)
+        finished = done.wait(timeout)
         if finished and chrome.poll() is None:
             time.sleep(0.5)    # let the last stderr lines through
     finally:
-        if args.keep:
+        if keep:
             print("--keep: Chrome PID %s and server PID %s (port %d) left running" % (
                 chrome.pid if chrome else "-", server.pid, port))
         else:
@@ -155,8 +165,8 @@ def main():
                 kill_tree(chrome)
             kill_tree(server)
     elapsed = time.time() - t0
-    if args.log:
-        with open(args.log, "w", encoding="utf-8") as f:
+    if log:
+        with open(log, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
 
     # ---- summary ----
@@ -165,19 +175,19 @@ def main():
     for line in lines:
         is_console = bool(CONSOLE_PREFIX.match(line))
         text = strip_console(line)
-        keep = False
+        keep_line = False
         if is_console:
             in_msg = '", source: ' not in line          # multi-line console message continues
-            keep = text.startswith("HARNESS") or "files from the local store" in text
+            keep_line = text.startswith("HARNESS") or "files from the local store" in text
         elif in_msg:
-            keep = True                                   # continuation (stack trace) of a console line
+            keep_line = True                              # continuation (stack trace) of a console line
             if '", source: ' in line:
                 in_msg = False
         is_error = any(w in text for w in ERROR_WORDS) or "HARNESS ERROR" in text or "AVATAR_ERROR" in text
         if is_error:
             errors.append(text)
-            keep = True
-        if keep:
+            keep_line = True
+        if keep_line:
             summary.append(text)
         m = re.match(r"HARNESS saved (\S+) (\d+)$", text)
         if m:
@@ -199,6 +209,65 @@ def main():
     status = "PASS" if reached and not errors else ("FAIL" if ended else "TIMEOUT")
     print("-- elapsed %.1f s%s  result: %s" % (
         elapsed, (" (DONE at %.1f s)" % t_done[0]) if t_done[0] else "", status))
+    return status, elapsed, t_done[0], errors, saved
+
+
+def page_for(avatar, phone, harness):
+    if harness:
+        return "tools/%s-harness.html" % harness
+    page = "tools/avatar-harness.html" if avatar else "tools/harness.html"
+    if avatar and phone:
+        page += "?phone"
+    return page
+
+
+def refresh_code_map():
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "codemap.py")], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    print("-- " + (r.stdout.strip().splitlines() or ["code map: (no output)"])[-1] if r.returncode == 0 else "-- code map failed: " + (r.stderr or r.stdout).strip())
+
+
+def main():
+    ap = argparse.ArgumentParser(description="headless check for Mirror Puppet")
+    ap.add_argument("--avatar", action="store_true", help="run tools/avatar-harness.html")
+    ap.add_argument("--phone", action="store_true", help="390x844 window + iPhone user agent")
+    ap.add_argument("--harness", choices=HARNESSES, help="a feature harness: tools/<name>-harness.html")
+    ap.add_argument("--all", action="store_true", help="run every check in a row and print a summary")
+    ap.add_argument("--fresh", action="store_true", help="delete the persistent profile first")
+    ap.add_argument("--keep", action="store_true", help="leave Chrome and the server running")
+    ap.add_argument("--timeout", type=float, default=150, help="seconds to wait for DONE (default 150)")
+    ap.add_argument("--port", type=int, default=8765, help="preferred server port (default 8765)")
+    ap.add_argument("--log", metavar="FILE", help="also write Chrome's full stderr to FILE")
+    ap.add_argument("--no-static", action="store_true", help="skip node --check and modcheck")
+    ap.add_argument("--no-map", action="store_true", help="do not refresh CODE_MAP.md")
+    args = ap.parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")    # status text has "·" and "×"; never die on the console codepage
+
+    if not os.path.isfile(CHROME):
+        print("Chrome not found:", CHROME)
+        return 2
+    if not args.no_static and not static_checks():
+        return 1
+
+    if args.all:
+        plan = [("desktop", "tools/harness.html", False), ("avatar", "tools/avatar-harness.html", False),
+                ("phone-size desktop", "tools/harness.html", True), ("phone-size avatar", "tools/avatar-harness.html?phone", True)]
+        plan += [(h, "tools/%s-harness.html" % h, False) for h in HARNESSES]
+        results = []
+        for label, page, phone in plan:
+            print("\n===== %s =====" % label)
+            status, elapsed, done_at, errors, saved = run(page, phone, args.fresh and not results, False, args.timeout, args.port, None)
+            results.append((label, status, elapsed, len(errors)))
+        print("\n===== summary =====")
+        for label, status, elapsed, n_err in results:
+            print("%-20s %-7s %5.1f s%s" % (label, status, elapsed, "" if not n_err else "  (%d error line(s))" % n_err))
+        if not args.no_map:
+            refresh_code_map()
+        return 0 if all(r[1] == "PASS" for r in results) else 1
+
+    status, *_ = run(page_for(args.avatar, args.phone, args.harness), args.phone, args.fresh, args.keep, args.timeout, args.port, args.log)
+    if not args.no_map:
+        refresh_code_map()
     return 0 if status == "PASS" else 1
 
 

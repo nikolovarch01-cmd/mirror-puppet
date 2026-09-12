@@ -45,6 +45,10 @@ function synth(st) {
   await sleep(2500);
   log('status', w.document.getElementById('status').textContent);
   log('loading hidden', w.document.getElementById('loading').classList.contains('hidden'));
+  // the modules must all arrive with the same ?v= stamp (import map) -- otherwise a phone can mix old and new files
+  const mods = w.performance.getEntriesByType('resource').map(e => e.name).filter(n => /\/js\/[\w-]+\.js/.test(n)).map(n => n.split('/js/')[1]);
+  const stamps = new Set(mods.map(n => (n.split('?v=')[1] || 'NONE')));
+  log('modules', mods.length, 'stamps', [...stamps].join(','), 'build', mp.build, 'label', w.document.getElementById('build').textContent, (mods.length === 9 && stamps.size === 1 && !stamps.has('NONE')) ? 'OK' : 'ERROR stamp mismatch');
   mp.stopCamera();
   const res = synth(mp.state);
   for (let i = 0; i < 25; i++) { mp.present(res); await sleep(30); }
