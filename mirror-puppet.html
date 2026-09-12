@@ -589,7 +589,9 @@ const pupilMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.
 const _eq = new THREE.Quaternion(), _ee = new THREE.Euler(), _em = new THREE.Matrix4();
 function buildEyes() {
   if (eyes.L || !boneOf('L_Eye') || !boneOf('R_Eye') || !boneOf('Head')) return;
-  const ipd = restOf('L_Eye').p.distanceTo(restOf('R_Eye').p), r = ipd * 0.24;   // eyeball radius, a little bigger than real, so ours show
+  const ipd = restOf('L_Eye').p.distanceTo(restOf('R_Eye').p);
+  const me = avatar.meshEyes || {};
+  const r = me.L && me.R ? Math.max(me.L.r, me.R.r) * 1.04 : ipd * 0.24;   // the model's own eyeball size when it was found
   // the face plane: across = right eye -> left eye, up = jaw (or head) -> between the eyes; forward = its normal
   const eyeMid = restOf('L_Eye').p.clone().add(restOf('R_Eye').p).multiplyScalar(0.5);
   // the rest pose stands upright, so the head's up is the world's up; across = right eye -> left eye
@@ -608,8 +610,9 @@ function buildEyes() {
     // the eye bones sit at the end of a scaled chain: undo that scale so the ball keeps its size in the model's units
     const chain = Math.abs(boneOf(side + '_Eye').getWorldScale(new THREE.Vector3()).x / (avatar.root.scale.x || 1)) || 1;
     g.scale.setScalar(1 / chain);
-    // the bone sits deep in the socket: the ball is pushed forward by 0.12 pupil distances so it fills the socket opening
-    g.position.set(0, 0, 1).applyQuaternion(g.userData.base).multiplyScalar(0.12 * ipd / chain);
+    // where the model's own eyeball was, in the bone's frame (or, without one, pushed forward out of the socket)
+    if (me[side]) g.position.copy(me[side].local); else g.position.set(0, 0, 1).applyQuaternion(g.userData.base).multiplyScalar(0.12 * ipd / chain);
+    const centre = new THREE.Object3D(); centre.position.copy(g.position); boneOf(side + '_Eye').add(centre); eyes.centre = eyes.centre || {}; eyes.centre[side] = centre;
     boneOf(side + '_Eye').add(g); eyes[side] = g;
   }
 }
@@ -769,14 +772,51 @@ function installRegionMask(root) {
     const regions=o.skeleton.bones.map(b=>regionOf(b.name));
     const attr=new THREE.Float32BufferAttribute(new Float32Array(idx.count).fill(1),1);
     g.setAttribute('trackedVisibility',attr);
-    // the model's own eyeballs (vertices within 1.2 eyeball radii of an eye bone) are hidden for good; our moving eyes replace them
+    // The model's own eyeballs are hidden for good and our moving eyes take their place. The rig's eye bones sit
+    // lower than the sculpted eyes, so the eyeballs are looked for in the mesh itself: separate, roundish pieces
+    // (connected components) near the eye bones. Their centres are remembered in each eye bone's own frame.
     const eye=new Uint8Array(idx.count);
     if (boneOf('L_Eye') && boneOf('R_Eye')) {
-      o.updateWorldMatrix(true,false);
-      const centres=['L','R'].map(sd=>boneOf(sd+'_Eye').getWorldPosition(new THREE.Vector3()));
-      const r=centres[0].distanceTo(centres[1])*0.36, pos=g.attributes.position, v=new THREE.Vector3();
       root.updateMatrixWorld(true);
-      for(let i=0;i<pos.count;i++){ v.fromBufferAttribute(pos,i); o.applyBoneTransform(i,v); v.applyMatrix4(o.matrixWorld); if(centres.some(c=>c.distanceTo(v)<r)){eye[i]=1;attr.setX(i,0);} }
+      const pos=g.attributes.position, v=new THREE.Vector3();
+      const bones={L:boneOf('L_Eye'),R:boneOf('R_Eye')}, centres={L:bones.L.getWorldPosition(new THREE.Vector3()),R:bones.R.getWorldPosition(new THREE.Vector3())};
+      const ipd=centres.L.distanceTo(centres.R);
+      const world=new Float32Array(pos.count*3);
+      for(let k=0;k<pos.count;k++){ v.fromBufferAttribute(pos,k); o.applyBoneTransform(k,v); v.applyMatrix4(o.matrixWorld); world[k*3]=v.x; world[k*3+1]=v.y; world[k*3+2]=v.z; }
+      // connected components over the triangles
+      const parent=new Int32Array(pos.count); for(let k=0;k<pos.count;k++)parent[k]=k;
+      const find=k=>{ while(parent[k]!==k){ parent[k]=parent[parent[k]]; k=parent[k]; } return k; };
+      const union=(a,b)=>{ a=find(a); b=find(b); if(a!==b)parent[a]=b; };
+      const ix=g.index?g.index.array:null, n=g.index?g.index.count:pos.count;
+      for(let t=0;t<n;t+=3){ const a=ix?ix[t]:t,b=ix?ix[t+1]:t+1,c=ix?ix[t+2]:t+2; union(a,b); union(b,c); }
+      // size up every component that has a vertex near an eye bone
+      const comps=new Map();
+      for(let k=0;k<pos.count;k++){
+        v.set(world[k*3],world[k*3+1],world[k*3+2]);
+        if(v.distanceTo(centres.L)>1.2*ipd && v.distanceTo(centres.R)>1.2*ipd) continue;
+        const rt=find(k); let c=comps.get(rt); if(!c){ c={n:0,min:new THREE.Vector3(1e9,1e9,1e9),max:new THREE.Vector3(-1e9,-1e9,-1e9)}; comps.set(rt,c); }
+        c.n++; c.min.min(v); c.max.max(v);
+      }
+      avatar.meshEyes={};
+      for(const sd of ['L','R']){
+        let best=null;
+        for(const [rt,c] of comps){
+          const size=c.max.clone().sub(c.min), ext=Math.max(size.x,size.y,size.z), low=Math.min(size.x,size.y,size.z);
+          if(c.n<12 || ext<0.2*ipd || ext>0.7*ipd || low/ext<0.5) continue;      // small, round: an eyeball
+          const centre=c.min.clone().add(c.max).multiplyScalar(0.5), d=centre.distanceTo(centres[sd]);
+          if(d<0.9*ipd && (!best || d<best.d)) best={rt,centre,r:ext/2,d};
+        }
+        if(best){
+          for(let k=0;k<pos.count;k++) if(find(k)===best.rt){ eye[k]=1; attr.setX(k,0); }
+          // the eyeball centre in the eye bone's own frame (so it follows the head)
+          const b=bones[sd], q=b.getWorldQuaternion(new THREE.Quaternion()).invert(), sc=b.getWorldScale(new THREE.Vector3()).x||1;
+          avatar.meshEyes[sd]={ local:best.centre.clone().sub(centres[sd]).applyQuaternion(q).divideScalar(sc), r:best.r, world:best.centre.clone() };
+        } else {   // no separate eyeball found: hide what sits around the bone, as before
+          const r=ipd*0.36;
+          for(let k=0;k<pos.count;k++){ v.set(world[k*3],world[k*3+1],world[k*3+2]); if(v.distanceTo(centres[sd])<r){ eye[k]=1; attr.setX(k,0); } }
+        }
+      }
+      console.log('eyes in the mesh:', ['L','R'].map(sd=>avatar.meshEyes[sd]?sd+' found r='+(avatar.meshEyes[sd].r/ipd).toFixed(2)+' ipd':sd+' not found').join(', '));
       attr.needsUpdate=true;
     }
     avatar.masks.push({attr,idx,weights,regions,eye});
@@ -874,8 +914,9 @@ function updateCameraAvatar(res) {
     applyFrame(['Head'],orientation(f(454).sub(f(234)),f(10).sub(f(152))),new THREE.Quaternion());
     const left=boneOf('L_Eye'),right=boneOf('R_Eye');
     if(left&&right) {
-      const eyes=mid(f(468),f(473)), actual=mid(left.getWorldPosition(new THREE.Vector3()),right.getWorldPosition(new THREE.Vector3()));
-      pinBone('Head',boneOf('Head').getWorldPosition(new THREE.Vector3()).add(eyes.sub(actual)));
+      const eL = (eyes.centre && eyes.centre.L) || left, eR = (eyes.centre && eyes.centre.R) || right;
+      const eyesAt=mid(f(468),f(473)), actual=mid(eL.getWorldPosition(new THREE.Vector3()),eR.getWorldPosition(new THREE.Vector3()));
+      pinBone('Head',boneOf('Head').getWorldPosition(new THREE.Vector3()).add(eyesAt.sub(actual)));
     } else pinBone('Head',f(152));
   }
   for(const h of hands) {
@@ -1006,9 +1047,10 @@ function detectPhones(ts, hands) {   // every 4th frame, only in 'auto', only wh
 // goes to one hand only, the one nearest its centre. A hand holds after two agreeing passes in a row, and
 // keeps holding for `hold` frames after the last one.
 function acceptBoxes(boxes, hands) {
+  phone.lastCount = boxes.length;
   const W = state.W, H = state.H, hit = { L: false, R: false };
   for (const b of boxes) {
-    if (b.score < 0.5) continue;
+    if (b.score < 0.45) continue;
     const long = Math.max(b.width, b.height), short = Math.min(b.width, b.height);
     if (short < 1 || long / short < 1.4 || long / short > 2.8 || long > 0.7 * Math.max(W, H)) continue;
     let best = null;
@@ -1095,6 +1137,7 @@ function updatePhones(res) {
     m.visible = true; any = true;
   }
   chips.phone.classList.toggle('on', any);
+  chips.phone.textContent = 'phone' + (phone.worker ? '' : phone.det ? ' · inline' : phone.loading ? ' · loading' : ' · off') + (phone.lastCount ? ' · sees ' + phone.lastCount : '');
 }
 $('optPhone').onchange = () => { if ($('optPhone').value === 'auto') ensurePhoneDetector(); };
 

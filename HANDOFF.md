@@ -251,3 +251,9 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
 - Eyes: yaw is flipped when the view is mirrored (the reflected character is a reflection); vertical gaze
   comes from Google's `eyeLookUp/Down` values (landmark lids as fallback) — it exists, it is just weaker.
 - Harnesses set a 1280×720 synthetic size when the fake camera's first frame is 2×2.
+- 2026-09-12 03:30: the rig's eye bones sit lower than the sculpted eyes. `installRegionMask` now finds the
+  model's own eyeballs as separate roundish connected components near the eye bones (found: r ≈ 0.34 IPD,
+  ~50 vertices each), hides exactly them, stores their centres in each eye bone's frame (`avatar.meshEyes`);
+  our eyeballs sit there, and the On-camera head pin uses these centres (`eyes.centre`) so the model's
+  eyes land on the recognised irises. The phone chip now reads e.g. „phone · sees 1“ / „phone · inline“ /
+  „phone · off“ so the detector state can be reported from a phone screenshot.
