@@ -93,3 +93,21 @@ In a restricted Windows sandbox, a fresh isolated headless Chrome profile may re
 `--no-sandbox --disable-gpu-sandbox`. A fake capture-service failure is separate from synthetic
 render/retarget tests and must be reported. Do not treat phone-sized headless tests as a real phone
 performance benchmark. Face and eye deformation is deliberately not implemented in this version.
+
+## 6. Feature harnesses (eyes, on-camera mode, phone)
+
+`check.py` runs only `harness.html` and `avatar-harness.html`. Three more pages cover the later features;
+run them the same way against the warm profile (`%TEMP%\mirror-puppet-check-profile`) with a server on
+another port, e.g. `py tools\testsrv.py 8771` and the Chrome command from section 1 with
+`http://127.0.0.1:8771/tools/<name>.html`; stop Chrome when `HARNESS DONE` prints (timeout 150 s):
+
+- `eyes-harness.html` — eyeballs built on the eye bones, gaze right / up / straight (landmark path,
+  `res.blend` is nulled on purpose), head close-up renders `eyes.png` / `eyes-near.png` / `eyes-only.png`.
+  Expect `eyes in the mesh: L found … R found …`, yaw ±0.60 (negative when the view is mirrored), pitch 0.40.
+- `overlay-harness.html` — On camera: the 3D canvas moves into the picture, regions keep 12 frames after a
+  part is lost, Guides toggle, switching back to Skeleton.
+- `phone-harness.html` — detector ready in the worker (`worker true`), two agreeing passes needed, weak and
+  wide boxes ignored, fixed-size phone upright in the hand with its back to the viewer, renders
+  `phone-*.png` and `phone-alone.png` (lights are hidden in that last render, so it is dark on purpose).
+
+All three set a 1280×720 synthetic size when the fake camera's first frame is 2×2.

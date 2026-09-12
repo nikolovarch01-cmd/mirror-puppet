@@ -257,3 +257,16 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   our eyeballs sit there, and the On-camera head pin uses these centres (`eyes.centre`) so the model's
   eyes land on the recognised irises. The phone chip now reads e.g. „phone · sees 1“ / „phone · inline“ /
   „phone · off“ so the detector state can be reported from a phone screenshot.
+
+## Working mode with the owner (from 2026-09-12) and the next task
+
+- **Discuss before acting.** He asked for it explicitly: describe the problem and the proposed change, wait
+  for his „давай“, then build. A single ❓ line at the end of the message is the question.
+- Every change: `py tools\check.py`, `--avatar`, `--phone`, plus the feature harnesses (tools/README.md § 6),
+  then commit and push. He tests live on his iPhone and sends screenshots; read the status line and the
+  chips on them (fps, detect+draw ms, „phone · sees N“).
+- **Next task he agreed to:** split `mirror-puppet.html` into separate files by section (store and
+  engines, skeleton puppet, character, eyes, phone, 2D overlay, camera and controls, loop) with no change
+  in behaviour; the page loads them as modules. After that, as a separate task: distribute recognition
+  across worker threads according to `navigator.hardwareConcurrency` (weak phones gain most; his iPhone
+  is GPU-bound and gains mostly smoothness; iOS < 17 has no WebGL in workers — keep the main-thread path).
