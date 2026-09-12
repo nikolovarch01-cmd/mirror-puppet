@@ -46,14 +46,17 @@ const mon = {
   tick(now) {                           // once a second: percentages, the summary line, the panel
     const dt = Math.max(1, now - mon.at); mon.at = now;
     mon.gpuPoll();
-    let gpuInf = 0, threads = 0;
+    let gpuInf = 0, gpuThreads = 0, threads = 0;
     for (const [name, r] of mon.rows) {
       r.pct = Math.min(100, Math.round(r.acc * 100 / dt));
       if (r.kind === 'thread') threads++;
-      if (r.delegate === 'GPU') gpuInf += r.acc;          // recognition on the video card, in a thread or on the main thread
+      // recognition on the video card: threads queue on the one card and overlap, so the slowest of them counts once;
+      // work on the main thread adds to it
+      if (r.delegate === 'GPU') { if (r.kind === 'thread') gpuThreads = Math.max(gpuThreads, r.acc); else gpuInf += r.acc; }
       if (r.kind !== 'info' && now - r.seen > 5000) { mon.rows.delete(name); continue; }   // a thread that stopped reporting
       r.acc = 0;
     }
+    gpuInf += gpuThreads;
     const render = mon.gpu.have ? mon.gpu.acc : 0; mon.gpu.acc = 0;
     mon.threads = threads;
     const gpuPct = Math.min(100, Math.round((gpuInf + render) * 100 / dt));

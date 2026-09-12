@@ -9,19 +9,24 @@ import { bigFile, assignHands } from './engines.js';
 import { mon } from './monitor.js';
 
 const THREAD_NAME = { face: 'face thread', hand: 'hands thread', pose: 'body thread' };
-// How many recognition threads this machine should run: the Threads menu, else by the core count.
+// How many recognition threads this machine should run: the Threads menu, else by the core count. Measured
+// 2026-09-12 (laptop iGPU): three GPU threads at once do not shorten the round -- the three contexts queue on the
+// one video card and each takes as long as all three in a row -- so one thread already gives the whole gain
+// (the main thread freed) at a third of the memory. Three threads are tried only on big machines (8+ cores,
+// usually a real graphics card that can overlap them); a phone reports 4 cores at most and gets one thread.
 function threadPlan() {
   const sel = $('optThreads').value;
   if (typeof Worker === 'undefined' || typeof createImageBitmap === 'undefined') return 0;
   if (sel !== 'auto') return +sel;
   const hc = navigator.hardwareConcurrency || 0;
-  return hc >= 4 ? 3 : hc >= 2 ? 1 : 0;
+  return hc >= 8 ? 3 : hc >= 2 ? 1 : 0;
 }
 // The thread's own code (a classic worker: the library needs importScripts). It receives the library, the wasm
 // pair and its models as bytes, builds the landmarkers with the delegate asked for (a refusal fails the whole
 // engine and the automatic chain moves on, e.g. to the GPU on the main thread), then answers every frame with
 // the parts it was asked for and the milliseconds each part took.
-const landmarkerWorkerSrc = "self.exports = {}; const tasks = {}; let used = '';\n" +
+const landmarkerWorkerSrc = "self.exports = {};\n(() => {   // a closure: importScripts drops the library's own top-level names into this scope\n" +
+"const tasks = {}; let used = '';\n" +
 "const make = async (V, fs, kind, buf, delegate) => {\n" +
 "  const base = { baseOptions: { modelAssetBuffer: new Uint8Array(buf), delegate }, runningMode: 'VIDEO' };\n" +
 "  if (typeof OffscreenCanvas !== 'undefined') base.canvas = new OffscreenCanvas(1, 1);   // the library's own canvas guess fails on some phone browsers (no 'Version/' in the UA): give it one\n" +
@@ -55,7 +60,8 @@ const landmarkerWorkerSrc = "self.exports = {}; const tasks = {}; let used = '';
 "    } catch (err) { out.error = String((err && err.message) || err); }\n" +
 "    m.frame.close(); self.postMessage(out);\n" +
 "  }\n" +
-"};\n";
+"};\n" +
+"})();\n";
 
 // The frame handed to a thread: a copy of the camera picture that can be moved to another thread.
 function grabFrame(v) { return createImageBitmap(v); }

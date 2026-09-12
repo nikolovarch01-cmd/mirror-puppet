@@ -130,7 +130,7 @@ def run(page, phone, fresh, keep, timeout, port, log):
     try:
         if not wait_port(port):
             print("server did not start on port", port)
-            return "FAIL", 0, None, ["server did not start"], []
+            return "FAIL", 0, None, ["server did not start"], [], []
         width, height = (390, 844) if phone else (1400, 800)
         cmd = [CHROME, "--headless=new", "--no-first-run", "--window-size=%d,%d" % (width, height),
                "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
@@ -210,7 +210,26 @@ def run(page, phone, fresh, keep, timeout, port, log):
     status = "PASS" if reached and not errors else ("FAIL" if ended else "TIMEOUT")
     print("-- elapsed %.1f s%s  result: %s" % (
         elapsed, (" (DONE at %.1f s)" % t_done[0]) if t_done[0] else "", status))
-    return status, elapsed, t_done[0], errors, saved
+    return status, elapsed, t_done[0], errors, saved, lines
+
+
+CAPTURE_CRASH = "Detected crash of video capture service"
+
+
+def run_retry(page, phone, fresh, keep, timeout, port, log, tries=3):
+    """run(), repeated when headless Chrome's fake camera died at start (its video capture service crashes in
+    roughly one launch in three on this machine; the device is then gone for that Chrome session, so only a
+    new launch helps). A failure that shows no such crash is reported as it is."""
+    for attempt in range(1, tries + 1):
+        result = run(page, phone, fresh and attempt == 1, keep, timeout, port, log)
+        status, chrome_lines = result[0], result[5]
+        crashed = any(CAPTURE_CRASH in l for l in chrome_lines)
+        if status == "PASS" or not crashed or keep or attempt == tries:
+            if crashed and status != "PASS":
+                print("-- note: Chrome's video capture service crashed in this launch too (%d launches tried)" % attempt)
+            return result
+        print("-- note: Chrome's video capture service crashed at start (a headless flake, not the page) -- launching again (%d/%d)" % (attempt + 1, tries))
+    return result
 
 
 def page_for(avatar, phone, harness):
@@ -260,7 +279,7 @@ def main():
         results = []
         for label, page, phone in plan:
             print("\n===== %s =====" % label)
-            status, elapsed, done_at, errors, saved = run(page, phone, args.fresh and not results, False, args.timeout, args.port, None)
+            status, elapsed, done_at, errors, saved, _ = run_retry(page, phone, args.fresh and not results, False, args.timeout, args.port, None)
             results.append((label, status, elapsed, len(errors)))
         print("\n===== summary =====")
         for label, status, elapsed, n_err in results:
@@ -269,7 +288,7 @@ def main():
             refresh_code_map()
         return 0 if all(r[1] == "PASS" for r in results) else 1
 
-    status, *_ = run(page_for(args.avatar, args.phone, args.harness), args.phone, args.fresh, args.keep, args.timeout, args.port, args.log)
+    status, *_ = run_retry(page_for(args.avatar, args.phone, args.harness), args.phone, args.fresh, args.keep, args.timeout, args.port, args.log)
     if not args.no_map:
         refresh_code_map()
     return 0 if status == "PASS" else 1

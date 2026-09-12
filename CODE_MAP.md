@@ -67,14 +67,14 @@ build step, no bundler. `tools/codemap.py` regenerates everything below the mark
 |---|---|---|
 | `js/core.js` | 95 | core: constants and pinned model addresses, the page's elements and shared state, the small geometry helpers, and the derived torso (neck root, clavicles, spine). Every other module imports from here. |
 | `js/engines.js` | 202 | recognition: the local store for the big files (IndexedDB), the MediaPipe engines (three separate models or the combined one), hands tied to the body's wrists, and the engine management (loading card, the automatic chain, error cards). |
-| `js/threads.js` | 139 | threads: recognition in worker threads. With enough cores the three models (face, hands, body) each run in their own thread; with two or three cores one thread runs all three in turn; without workers the main thread does it as before. The main thread hands every idle thread a copy of the current frame and draws with the newest results it has, so the picture never waits for recognition. Each thread reports its work to the Performance panel. |
+| `js/threads.js` | 145 | threads: recognition in worker threads. With enough cores the three models (face, hands, body) each run in their own thread; with two or three cores one thread runs all three in turn; without workers the main thread does it as before. The main thread hands every idle thread a copy of the current frame and draws with the newest results it has, so the picture never waits for recognition. Each thread reports its work to the Performance panel. |
 | `js/skeleton.js` | 211 | skeleton: the 3D scene (renderer, cameras, lights, grid), the rigs of joints and bones for the body, the hands and the face, image/world → scene coordinates, smoothing, the puppet update per frame, and the sizing of the 3D canvas to its box. |
 | `js/eyes.js` | 75 | eyes: two eyeballs of our own where the character's own eyes were, and the gaze that turns them (Google's eyeLook values when the engine gives them, iris / corner / lid ratios otherwise). |
 | `js/character.js` | 371 | character: his textured AccuRIG model, loaded on demand; directional retargeting of the smoothed landmarks onto its bones (Character 3D); the On-camera fit in image space with unrecognised regions hidden by a per-vertex mask; the display switch skeleton / character / on camera; the rest-pose button. |
 | `js/phone.js` | 185 | phone: the cell-phone detector in its own worker (fed with bytes from the local store), which hand holds, and the phone (his iPhone model, a slab until it loads) placed from the hand points in every view. |
 | `js/overlay.js` | 101 | 2D drawing: the skeleton over the camera picture (body, derived torso, hands with the phone rectangle, face mesh and contours) and the expression list under the picture. |
 | `js/camera.js` | 114 | camera and buttons: the camera stream (front / back, sizes, failures on a card), the picture size, mirror, the phone's one-view switch, the snapshot, and the header buttons. |
-| `js/monitor.js` | 98 | monitor: what the machine does each second — the main thread, every recognition thread, the video card — shown in the Performance panel (closed by default: one summary line; tap to open the rows with bars). Busy % of a thread = milliseconds it worked in the last second / 1000, so 100 − busy is the room left for more work on that thread. The GPU share is an estimate: the time of GPU-delegate recognition (which includes some CPU pre/post-processing) plus the measured draw time of the 3D view when the browser can time it (EXT_disjoint_timer_query_webgl2); no browser exposes a real GPU utilisation figure. |
+| `js/monitor.js` | 101 | monitor: what the machine does each second — the main thread, every recognition thread, the video card — shown in the Performance panel (closed by default: one summary line; tap to open the rows with bars). Busy % of a thread = milliseconds it worked in the last second / 1000, so 100 − busy is the room left for more work on that thread. The GPU share is an estimate: the time of GPU-delegate recognition (which includes some CPU pre/post-processing) plus the measured draw time of the 3D view when the browser can time it (EXT_disjoint_timer_query_webgl2); no browser exposes a real GPU utilisation figure. |
 | `js/main.js` | 83 | the loop: one frame (recognition → 2D drawing → puppet → character → phone), the status line, the console handle for the tests, and the start-up. The modules import each other in circles (a function defined in a later file is called from an earlier one). That is safe because no module touches another module's variables while the files are still loading: at load time each file only builds its own objects and points event handlers at functions; the calls come later. |
 | `mirror-puppet.html` | 159 | style, markup, import map + build stamp, the module tag |
 
@@ -166,45 +166,47 @@ threads: recognition in worker threads. With enough cores the three models (face
 - exports: `threadPlan`, `createThreadedBackend`, `grabFrame`
 
 - L11 `const` `THREAD_NAME`
-- L13 `fn` `threadPlan()` — How many recognition threads this machine should run: the Threads menu, else by the core count.
-- L24 `const` `landmarkerWorkerSrc` — The thread's own code (a classic worker: the library needs importScripts). It receives the library, the wasm pair and its models as bytes, b
-- L25 `run` `"const make = async (V, fs, kind, buf, delegate) => {\n" +`
-- L26 `run` `"  const base = { baseOptions: { modelAssetBuffer: new Uint8Array(buf), delegate }, runnin`
-- L27 `run` `"  if (typeof OffscreenCanvas !== 'undefined') base.canvas = new OffscreenCanvas(1, 1);   `
-- L28 `run` `"  if (kind === 'face') return V.FaceLandmarker.createFromOptions(fs, Object.assign(base, `
-- L29 `run` `"  if (kind === 'hand') return V.HandLandmarker.createFromOptions(fs, Object.assign(base, `
-- L30 `run` `"  return V.PoseLandmarker.createFromOptions(fs, Object.assign(base, { numPoses: 1 }));\n"`
-- L31 `run` `"};\n" +`
-- L32 `run` `"const warmUp = t => { t.detectForVideo(new ImageData(64, 64), 1); };   // the first detec`
-- L33 `run` `"self.onmessage = async e => {\n" +`
-- L34 `run` `"  const m = e.data;\n" +`
-- L35 `run` `"  if (m.type === 'init') {\n" +`
-- L36 `run` `"    try {\n" +`
-- L37 `run` `"      importScripts(URL.createObjectURL(new Blob([m.lib], { type: 'text/javascript' })));`
-- L38 `run` `"      const V = self.exports;\n" +`
-- L39 `run` `"      const fs = { wasmLoaderPath: URL.createObjectURL(new Blob([m.js], { type: 'text/jav`
-- L40 `run` `"      for (const kind of m.kinds) { tasks[kind] = await make(V, fs, kind, m.models[kind],`
-- L41 `run` `"      self.postMessage({ type: 'ready', delegate: used, gl: typeof OffscreenCanvas !== 'u`
-- L42 `run` `"    } catch (err) { self.postMessage({ type: 'error', message: String((err && err.message`
-- L43 `run` `"    return;\n" +`
-- L44 `run` `"  }\n" +`
-- L45 `run` `"  if (m.type === 'frame') {\n" +`
-- L46 `run` `"    const out = { type: 'result', ts: m.ts, ms: {} };\n" +`
-- L47 `run` `"    try {\n" +`
-- L48 `run` `"      for (const kind of m.kinds) {\n" +`
-- L49 `run` `"        const t = performance.now(), r = tasks[kind].detectForVideo(m.frame, m.ts);\n" +`
-- L50 `run` `"        out.ms[kind] = performance.now() - t;\n" +`
-- L51 `run` `"        if (kind === 'face') { out.face = r.faceLandmarks[0] || null; out.blend = r.faceB`
-- L52 `run` `"        else if (kind === 'hand') out.hands = r.landmarks.map((img, i) => ({ side: null, `
-- L53 `run` `"        else { out.pose = r.landmarks[0] || null; out.poseWorld = r.worldLandmarks[0] || `
-- L54 `run` `"      }\n" +`
-- L55 `run` `"    } catch (err) { out.error = String((err && err.message) || err); }\n" +`
-- L56 `run` `"    m.frame.close(); self.postMessage(out);\n" +`
-- L57 `run` `"  }\n" +`
-- L58 `run` `"};\n";`
-- L61 `fn` `grabFrame(v)` — The frame handed to a thread: a copy of the camera picture that can be moved to another thread.
-- L63 `async fn` `startWorker(kinds, delegate, kit, models)`
-- L81 `async fn` `createThreadedBackend(delegate)` — The engine: same shape as the others ({ key, label, detect(v, ts), close() }), but detect() never waits.
+- L17 `fn` `threadPlan()` — How many recognition threads this machine should run: the Threads menu, else by the core count. Measured 2026-09-12 (laptop iGPU): three GPU
+- L28 `const` `landmarkerWorkerSrc` — The thread's own code (a classic worker: the library needs importScripts). It receives the library, the wasm pair and its models as bytes, b
+- L29 `run` `"const tasks = {}; let used = '';\n" +`
+- L30 `run` `"const make = async (V, fs, kind, buf, delegate) => {\n" +`
+- L31 `run` `"  const base = { baseOptions: { modelAssetBuffer: new Uint8Array(buf), delegate }, runnin`
+- L32 `run` `"  if (typeof OffscreenCanvas !== 'undefined') base.canvas = new OffscreenCanvas(1, 1);   `
+- L33 `run` `"  if (kind === 'face') return V.FaceLandmarker.createFromOptions(fs, Object.assign(base, `
+- L34 `run` `"  if (kind === 'hand') return V.HandLandmarker.createFromOptions(fs, Object.assign(base, `
+- L35 `run` `"  return V.PoseLandmarker.createFromOptions(fs, Object.assign(base, { numPoses: 1 }));\n"`
+- L36 `run` `"};\n" +`
+- L37 `run` `"const warmUp = t => { t.detectForVideo(new ImageData(64, 64), 1); };   // the first detec`
+- L38 `run` `"self.onmessage = async e => {\n" +`
+- L39 `run` `"  const m = e.data;\n" +`
+- L40 `run` `"  if (m.type === 'init') {\n" +`
+- L41 `run` `"    try {\n" +`
+- L42 `run` `"      importScripts(URL.createObjectURL(new Blob([m.lib], { type: 'text/javascript' })));`
+- L43 `run` `"      const V = self.exports;\n" +`
+- L44 `run` `"      const fs = { wasmLoaderPath: URL.createObjectURL(new Blob([m.js], { type: 'text/jav`
+- L45 `run` `"      for (const kind of m.kinds) { tasks[kind] = await make(V, fs, kind, m.models[kind],`
+- L46 `run` `"      self.postMessage({ type: 'ready', delegate: used, gl: typeof OffscreenCanvas !== 'u`
+- L47 `run` `"    } catch (err) { self.postMessage({ type: 'error', message: String((err && err.message`
+- L48 `run` `"    return;\n" +`
+- L49 `run` `"  }\n" +`
+- L50 `run` `"  if (m.type === 'frame') {\n" +`
+- L51 `run` `"    const out = { type: 'result', ts: m.ts, ms: {} };\n" +`
+- L52 `run` `"    try {\n" +`
+- L53 `run` `"      for (const kind of m.kinds) {\n" +`
+- L54 `run` `"        const t = performance.now(), r = tasks[kind].detectForVideo(m.frame, m.ts);\n" +`
+- L55 `run` `"        out.ms[kind] = performance.now() - t;\n" +`
+- L56 `run` `"        if (kind === 'face') { out.face = r.faceLandmarks[0] || null; out.blend = r.faceB`
+- L57 `run` `"        else if (kind === 'hand') out.hands = r.landmarks.map((img, i) => ({ side: null, `
+- L58 `run` `"        else { out.pose = r.landmarks[0] || null; out.poseWorld = r.worldLandmarks[0] || `
+- L59 `run` `"      }\n" +`
+- L60 `run` `"    } catch (err) { out.error = String((err && err.message) || err); }\n" +`
+- L61 `run` `"    m.frame.close(); self.postMessage(out);\n" +`
+- L62 `run` `"  }\n" +`
+- L63 `run` `"};\n" +`
+- L64 `run` `"})();\n";`
+- L67 `fn` `grabFrame(v)` — The frame handed to a thread: a copy of the camera picture that can be moved to another thread.
+- L69 `async fn` `startWorker(kinds, delegate, kit, models)`
+- L87 `async fn` `createThreadedBackend(delegate)` — The engine: same shape as the others ({ key, label, detect(v, ts), close() }), but detect() never waits.
 
 ## `js/skeleton.js`
 
@@ -428,8 +430,8 @@ monitor: what the machine does each second — the main thread, every recognitio
 
 - L10 `const` `KIND_ORDER`
 - L11 `const` `mon`
-- L86 `fn` `initGpu()`
-- L97 `on` `$('perfTitle').onclick`
+- L89 `fn` `initGpu()`
+- L100 `on` `$('perfTitle').onclick`
 
 ## `js/main.js`
 

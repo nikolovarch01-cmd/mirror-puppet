@@ -341,6 +341,44 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   track ended silently; the page then stood still at 0 fps. `camera.js` now restarts a track the browser
   ended (up to three times a minute, then a card). Whether the crash happens on a real machine is unknown;
   the restart covers it either way.
-- Not verified live: his laptop (RTX 3060, 12 cores → 3 threads) and his iPhone (6 cores → 3 threads; GPU
-  contention between three contexts is the open question — the Threads menu lets him compare 3 / 1 / off, and
-  the panel rows give the numbers).
+- Platform facts (fact-finder from documentation and engine source, 2026-09-12): WebGL in a worker's
+  OffscreenCanvas needs iOS 17 (16.4 has only 2D) — every iOS browser is WebKit, so this holds for Chrome and
+  the Messenger browser on iPhone too; below that the worker's GPU create fails and the chain moves on to the
+  main thread. WebKit reports `hardwareConcurrency` 4 on every iPhone (8 on big iPads), Chromium the raw core
+  count. tasks-vision 1.0.1 guesses its OffscreenCanvas from the user agent and the guess fails when the UA has
+  no "Version/" token (in-app browsers, CriOS, FxiOS) — hence the explicit `canvas: new OffscreenCanvas(1, 1)`
+  in the worker. `detectForVideo` accepts ImageBitmap, ImageData, OffscreenCanvas and VideoFrame. Context caps:
+  16 on the main thread + 4 per worker (Chromium and WebKit). GPU timing (`EXT_disjoint_timer_query_webgl2`) is
+  desktop Chrome/Edge only; WebKit names every card "Apple GPU".
+- Delegate policy: a thread uses exactly the delegate it was asked for; a refusal fails the engine and the chain
+  moves on (`threads:GPU → sep:GPU → threads:CPU → sep:CPU → holistic:CPU`), so a phone whose workers cannot do
+  GPU gets the GPU on the main thread rather than three CPU threads. "3 models · threads · CPU" is in the menu.
+- Frame hand-off cost (fact-finder, headless Chrome 153, fake 1280×720 NV12 camera, indicative only): three
+  `createImageBitmap(video)` + transfer to three workers ≈ 1.2–1.4 ms per frame on the main thread; a
+  `VideoFrame` + two `clone()` + transfer ≈ 0.22–0.26 ms (5× less); a downscaled bitmap is not cheaper; inside
+  the worker `texImage2D` of an ImageBitmap 0.04 ms vs a VideoFrame 0.12 ms. Both are small next to a 33 ms
+  frame, so `grabFrame()` stays on ImageBitmap (verified end to end in the harness); VideoFrame (Safari 16.4+,
+  Chrome 94+, accepted by `detectForVideo`) is the next lever if a phone's main thread turns out busy —
+  one function to change.
+- **Headless flake, not the page:** on this laptop the fake camera's track ends within 0.2–1.7 s in about one
+  launch in three ("Detected crash of video capture service"; the device is then gone for that Chrome session).
+  `check.py` now relaunches such a run (up to three launches) and says so. ⚠️ Process lesson of the day: a
+  `py tools\check.py --all | grep …` pipeline returns grep's exit code, so a failed harness once slipped into a
+  push — gate on check.py's own exit code (`set -o pipefail`, or run it without a pipe).
+- **Measured by the worker fact-finder (headless, real Intel iGPU, not SwiftShader):** a landmarker costs the
+  same in a worker as on the main thread (all three ≈ 30 ms on the fake camera, ≈ 53 ms with a person);
+  **three GPU workers at once do not shorten the round** — each landmarker gets 2–4× slower when concurrent
+  (6/12/17 ms alone → ~27 ms each together), round trip 29 ms vs 31 ms for one worker doing all three in a
+  row. The gain of threads is the freed main thread, not a shorter frame; three threads cost three wasm
+  instances (11.7 MB each) and three GL contexts. Hence the plan: `hardwareConcurrency` ≥ 8 → 3 threads
+  (a machine with a real graphics card may overlap them), ≥ 2 → 1 thread, else main thread; iPhones (report 4)
+  get one thread. The panel's GPU estimate counts concurrent threads once (the slowest), not summed.
+  Also measured: the cold first detect is 2–3 s per landmarker on the GPU (hence the warm-up before ready);
+  CPU delegate ≈ 65 ms / 116 ms (camera / person) for all three, hand 35–65 ms of it; forced SwiftShader
+  "GPU" is 12× slower than CPU, so "GPU accepted" is not "GPU faster". `detectForVideo` accepted ImageBitmap,
+  VideoFrame, ImageData in the worker. ⚠️ A repeated or backwards timestamp **permanently poisons** a
+  landmarker instance (every later call throws) — only close + create helps; timestamps are per instance, the
+  same ts for the three models in one round is fine. ⚠️ `importScripts` of the library drops its top-level
+  names into the worker's global scope — the worker's own code sits in a closure so nothing collides.
+- Not verified live: his laptop (RTX 3060, 12 cores → 3 threads) and his iPhone (reports 4 cores → 1 thread;
+  the Threads menu lets him compare 3 / 1 / off, and the panel rows give the numbers).
