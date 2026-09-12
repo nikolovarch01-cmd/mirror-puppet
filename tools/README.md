@@ -27,8 +27,11 @@ the profile after editing the page.
 Flags: `--avatar` runs `avatar-harness.html` (section 5, expects `AVATAR_DONE`); `--phone` uses a
 390x844 window and the iPhone user agent (adds `?phone` for `--avatar`); `--harness eyes|overlay|phone`
 runs one of the feature harnesses (section 6); **`--all` runs everything in a row** (desktop, avatar,
-phone-size desktop, phone-size avatar, eyes, overlay, phone — about 40 s, one summary line each, exit 1
-if any failed); `--fresh` deletes the profile first; `--keep` leaves Chrome and the server running and
+phone-size desktop, phone-size avatar, eyes, overlay, phone, threads — about 90 s, one summary line each,
+exit 1 if any failed). When headless Chrome's fake camera dies at start (its video capture service crashes in
+roughly one launch in three on this laptop, "Detected crash of video capture service" in Chrome's log), the
+run is launched again automatically (up to three launches) and a `-- note:` line says so. Gate scripts on
+check.py's own exit code — `py tools\check.py --all | grep …` returns grep's; `--fresh` deletes the profile first; `--keep` leaves Chrome and the server running and
 prints their PIDs; `--timeout N`; `--port N` (preferred server port); `--log FILE` saves Chrome's full
 stderr for a closer look.
 

@@ -70,7 +70,7 @@ async function createBackend(key) {
     // On the GPU the expression part of the combined model fails ("No support of const"),
     // so there the expressions are switched off; the face mesh itself still follows the face.
     const lm = await HolisticLandmarker.createFromOptions(fs, {
-      baseOptions: { modelAssetBuffer: await bigFile(MODEL.holistic), delegate }, runningMode: 'VIDEO', outputFaceBlendshapes: delegate !== 'GPU' });
+      baseOptions: { modelAssetBuffer: await bigFile(MODEL.holistic), delegate }, runningMode: 'VIDEO', outputFaceBlendshapes: delegate !== 'GPU', canvas: document.createElement('canvas') });
     return {
       key, label: 'combined · ' + delegate,
       detect(v, ts) {
@@ -90,7 +90,8 @@ async function createBackend(key) {
     };
   }
   const [fb, hb, pb] = await Promise.all([bigFile(MODEL.face), bigFile(MODEL.hand), bigFile(MODEL.pose)]);
-  const base = b => ({ baseOptions: { modelAssetBuffer: b, delegate }, runningMode: 'VIDEO' });
+  // each task gets its own canvas (the library's own guess fails in in-app browsers on iOS 16.4-16.7: OffscreenCanvas without WebGL)
+  const base = b => ({ baseOptions: { modelAssetBuffer: b, delegate }, runningMode: 'VIDEO', canvas: document.createElement('canvas') });
   const [face, hand, pose] = await Promise.all([
     FaceLandmarker.createFromOptions(fs, { ...base(fb), numFaces: 1, outputFaceBlendshapes: true }),
     HandLandmarker.createFromOptions(fs, { ...base(hb), numHands: 2 }),
@@ -149,16 +150,16 @@ function assignHands(hands, pose) {
 // ---------------------------------------------------------------- engine management
 const CHAIN = ['threads:GPU', 'sep:GPU', 'threads:CPU', 'sep:CPU', 'holistic:CPU'];   // what "automatic" tries, in order
 const engineChain = () => threadPlan() ? CHAIN : CHAIN.filter(k => !k.startsWith('threads'));   // no threads on this device: skip them
-let backend = null, chainPos = 0, wanted = null;
+let backend = null, chainPos = 0, wanted = null, gen = 0;   // gen: the newest engine request wins, older builds close themselves
 function showLoading(html, kind) {
   ui.loading.dataset.kind = kind || 'loading';
   ui.loading.innerHTML = '<div class="box">' + html + '<small style="display:block;margin-top:10px;opacity:.55">' + UA + '</small></div>';
   ui.loading.classList.remove('hidden');
 }
 // A card keeps the menu reachable and always offers a way out; long traces stay in the console.
-function showCard(title, reason, buttons) {
+function showCard(title, reason, buttons, kind) {   // kind 'camera': a camera card, which an engine load must not sweep away
   showLoading('<b>' + title + '</b>' + (reason ? '<br><small>' + String(reason).replace(/</g, '&lt;') + '</small>' : '')
-    + '<div class="row">' + buttons.map(b => '<button' + (b.primary ? ' class="primary"' : '') + '>' + b.label + '</button>').join('') + '</div>', 'card');
+    + '<div class="row">' + buttons.map(b => '<button' + (b.primary ? ' class="primary"' : '') + '>' + b.label + '</button>').join('') + '</div>', kind || 'card');
   ui.loading.querySelectorAll('button').forEach((el, i) => el.onclick = () => { ui.loading.classList.add('hidden'); if (buttons[i].onClick) buttons[i].onClick(); setStatus(); });
 }
 function showError(title, e) {
@@ -168,23 +169,28 @@ function showError(title, e) {
 async function useEngine(sel, rebuild) {   // rebuild: the same key again (a new thread plan)
   const key = sel === 'auto' ? engineChain()[Math.min(chainPos, engineChain().length - 1)] : sel;
   if (backend && backend.key === key && !rebuild) { ui.loading.classList.add('hidden'); return; }
+  const my = ++gen;   // an older build that finishes after this request closes itself and stays silent
   wanted = key;
-  showLoading('Loading the recognition models…<br><small id="prog">checking this device</small>');
+  const cameraCard = ui.loading.dataset.kind === 'camera' && !ui.loading.classList.contains('hidden');
+  if (!cameraCard) showLoading('Loading the recognition models…<br><small id="prog">checking this device</small>');   // a camera card stays: it holds the way out
   const old = backend; backend = null; if (old) old.close();
   try {
     let b;
     try { b = await createBackend(key); }
     catch (e) {
-      if (!(fileset && fileset.local)) throw e;
+      if (my !== gen || key.startsWith('threads') || !(fileset && fileset.local)) throw e;   // the threads never use the page's fileset
       console.warn('engine failed with the stored wasm, retrying from the CDN', e);
       fileset = await FilesetResolver.forVisionTasks(MPV + '/wasm');
       b = await createBackend(key);
     }
     console.log('files from the local store:', dl.fromStore, '| downloaded MB:', (dl.done / 1e6).toFixed(1));
-    if (wanted !== key) { b.close(); return; }
-    backend = b; wanted = null; b.onError = onDetectError; resetSmoothing(); if (ui.loading.dataset.kind !== 'card') ui.loading.classList.add('hidden'); setStatus();
+    if (my !== gen) { b.close(); return; }
+    backend = b; wanted = null; b.onError = onDetectError; resetSmoothing();
+    if (ui.loading.dataset.kind !== 'card' && ui.loading.dataset.kind !== 'camera') ui.loading.classList.add('hidden');
+    setStatus();
     if ($('optPhone').value === 'auto') ensurePhoneDetector();
   } catch (e) {
+    if (my !== gen) return;   // a superseded build: its failure must not move the chain, clear the status or show a card
     console.error('engine failed', key, e);
     if (sel === 'auto' && chainPos < engineChain().length - 1) { chainPos++; return useEngine('auto'); }
     wanted = null; showError('This engine did not start', e); setStatus();
@@ -197,6 +203,9 @@ function onDetectError(e) {
   else { showError('Recognition stopped', e); setStatus(); }
 }
 ui.engine.onchange = () => { chainPos = 0; useEngine(ui.engine.value); };
-$('optThreads').onchange = () => { chainPos = 0; useEngine(ui.engine.value, true); };   // a different thread plan: the engine is rebuilt
+$('optThreads').onchange = () => {   // a different thread plan: the engine is rebuilt, when the plan matters to it
+  const v = ui.engine.value; if (v !== 'auto' && !v.startsWith('threads')) return;
+  chainPos = 0; useEngine(v, true);
+};
 
 export { bigFile, getFileset, dl, createBackend, assignHands, backend, wanted, showLoading, showCard, showError, useEngine, onDetectError };

@@ -322,9 +322,11 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
 
 - Engine `threads:GPU` (menu "3 models · threads"; first in the automatic chain when the device allows it):
   each of the three landmarkers runs in its own classic worker (the library, the wasm pair and the model handed
-  over as bytes from the local store, like the phone detector); with 2–3 cores one worker runs all three in
-  turn; without workers the main thread as before. `Threads` menu: auto (by `hardwareConcurrency`: ≥ 4 → 3,
-  ≥ 2 → 1, else main thread) / 3 / 1 / off — changing it rebuilds the engine.
+  over as bytes from the local store, like the phone detector); on phones and on computers with fewer than 8
+  cores one worker runs all three in turn; without workers the main thread as before. `Threads` menu: auto
+  (≥ 8 cores and not a phone → 3, ≥ 2 → 1, else main thread; the rule is measured, see below — WebKit reports 4
+  cores on every iPhone, Android browsers the raw count, often 8) / 3 / 1 / off — changing it rebuilds the
+  engine (only when the engine is automatic or a threads engine).
 - The main thread gives every idle thread a copy of the frame (`createImageBitmap(video)`, transferred) and
   draws with the newest results; `detect()` returns `null` when nothing new arrived. Hands are tied to the
   body's wrists on the main thread (`assignHands`) from the newest hands and pose. Each thread measures its
@@ -380,5 +382,15 @@ Open from the owner: "front camera lags, back camera great" (live, iPhone) — n
   landmarker instance (every later call throws) — only close + create helps; timestamps are per instance, the
   same ts for the three models in one round is fine. ⚠️ `importScripts` of the library drops its top-level
   names into the worker's global scope — the worker's own code sits in a closure so nothing collides.
+- Review of the day (3 lens reviewers + 36 adversarial verifications, 27 confirmed, all fixed): engine builds
+  carry a generation number, so a Threads/Engine change during a multi-second build cannot install the older
+  plan or move the chain on a stale failure; `startCamera`/`stopCamera` carry one too (no second stream left
+  open); the thread reads its bytes only after a cheap hello that tells whether the worker has WebGL (iOS 16
+  fails in milliseconds, not after 14 MB of copies); a failure while starting the 2nd/3rd thread terminates
+  the ones already started; the engine's `reset()` drops results that belong to a previous camera stream
+  (Flip, rotation, an ended track); a camera card is never swept away by an engine load; the GPU timer keeps a
+  queue of queries (one per frame, read a few frames later) and resets on a lost context; the main-thread
+  engines get an explicit canvas too; the two bottom boxes never overlap; the threads harness follows the
+  machine's plan and flips the menu twice without waiting.
 - Not verified live: his laptop (RTX 3060, 12 cores → 3 threads) and his iPhone (reports 4 cores → 1 thread;
   the Threads menu lets him compare 3 / 1 / off, and the panel rows give the numbers).

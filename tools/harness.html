@@ -50,6 +50,10 @@ function synth(st) {
   const stamps = new Set(mods.map(n => (n.split('?v=')[1] || 'NONE')));
   const mapped = Object.keys(JSON.parse(w.document.querySelector('script[type=importmap]').textContent).imports).filter(k => k.startsWith('./js/')).length;
   log('modules', mods.length, 'of', mapped, 'in the import map', 'stamps', [...stamps].join(','), 'build', mp.build, 'label', w.document.getElementById('build').textContent, (mods.length === mapped && stamps.size === 1 && !stamps.has('NONE')) ? 'OK' : 'ERROR stamp mismatch');
+  // the Performance panel while the camera still runs: the card's name and a row per recognition thread
+  const threadNames = (mp.backend.workers || []).map(x => x.name), missingRows = threadNames.filter(n => !mp.mon.rows.has(n));
+  log('monitor while running: gpu', mp.mon.gpu.name || '-', '| thread rows', threadNames.length - missingRows.length, 'of', threadNames.length,
+      (mp.mon.gpu.name && !missingRows.length) ? 'OK' : 'ERROR ' + (mp.mon.gpu.name ? 'missing rows ' + missingRows.join(', ') : 'no GPU name'));
   mp.stopCamera();
   const res = synth(mp.state);
   for (let i = 0; i < 25; i++) { mp.present(res); await sleep(30); }

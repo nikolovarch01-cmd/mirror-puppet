@@ -12,7 +12,7 @@ const mon = {
   cores: navigator.hardwareConcurrency || 0,
   rows: new Map(),                     // name -> { kind, delegate, acc (ms this second), last (ms), pct, text, order }
   at: performance.now(),
-  gpu: { name: '', ext: null, query: null, acc: 0, have: false },
+  gpu: { name: '', ext: null, query: null, pending: [], acc: 0, have: false },   // pending: queries whose result is not back yet (a few frames)
   summary: '',
   threads: 0,
   report(name, ms, opts) {              // add `ms` of work done by `name` (a thread, the main thread, or an info row)
@@ -24,23 +24,25 @@ const mon = {
     r.acc += ms; r.last = ms; r.seen = performance.now();
   },
   forget(name) { mon.rows.delete(name); },
-  gpuBegin() {                          // time the 3D draw on the video card when the browser allows it (one query in flight)
+  gpuBegin() {                          // time the 3D draw on the video card when the browser allows it (results come back a few frames later)
     const g = mon.gpu; if (g.ext === null) initGpu();
-    if (!g.ext || g.query) return;
+    if (!g.ext) return;
+    mon.gpuPoll();
+    if (g.query || g.pending.length >= 8) return;   // at most eight frames in flight
     const gl = renderer.getContext();
     g.query = gl.createQuery(); gl.beginQuery(g.ext.TIME_ELAPSED_EXT, g.query);
   },
   gpuEnd() {
     const g = mon.gpu; if (!g.ext || !g.query) return;
-    const gl = renderer.getContext(); gl.endQuery(g.ext.TIME_ELAPSED_EXT); g.pending = g.query; g.query = null;
-    mon.gpuPoll();
+    const gl = renderer.getContext(); gl.endQuery(g.ext.TIME_ELAPSED_EXT); g.pending.push(g.query); g.query = null;
   },
-  gpuPoll() {
-    const g = mon.gpu; if (!g.pending) return;
+  gpuPoll() {                           // the finished queries, in order
+    const g = mon.gpu; if (!g.ext || !g.pending.length) return;
     const gl = renderer.getContext();
-    if (gl.getQueryParameter(g.pending, gl.QUERY_RESULT_AVAILABLE)) {
-      if (!gl.getParameter(g.ext.GPU_DISJOINT_EXT)) { g.acc += gl.getQueryParameter(g.pending, gl.QUERY_RESULT) / 1e6; g.have = true; }
-      gl.deleteQuery(g.pending); g.pending = null;
+    while (g.pending.length && gl.getQueryParameter(g.pending[0], gl.QUERY_RESULT_AVAILABLE)) {
+      const q = g.pending.shift();
+      if (!gl.getParameter(g.ext.GPU_DISJOINT_EXT)) { g.acc += gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6; g.have = true; }
+      gl.deleteQuery(q);
     }
   },
   tick(now) {                           // once a second: percentages, the summary line, the panel
@@ -86,8 +88,12 @@ const mon = {
     });
   },
 };
+const resetGpu = () => { const g = mon.gpu; g.ext = null; g.query = null; g.pending = []; g.acc = 0; g.have = false; };   // a lost context takes its queries and extensions with it
+renderer.domElement.addEventListener('webglcontextlost', resetGpu);
+renderer.domElement.addEventListener('webglcontextrestored', resetGpu);
 function initGpu() {
   const g = mon.gpu, gl = renderer.getContext();
+  if (gl.isContextLost()) return;   // try again on a later frame
   try {
     const info = gl.getExtension('WEBGL_debug_renderer_info');
     let name = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);

@@ -30,11 +30,11 @@ body.novideo .picture video{visibility:hidden}
 .chip{padding:2px 8px;border-radius:999px;font-size:12px;background:rgba(15,19,23,.7);color:var(--muted);border:1px solid var(--line)}
 .chip.on{color:#04121c;border-color:transparent}
 .chip.on.phone{background:#e4e6ea}.chip.on.face{background:var(--face)}.chip.on.body{background:var(--body)}.chip.on.left{background:var(--left)}.chip.on.right{background:var(--right)}
-#expr{position:absolute;left:10px;bottom:10px;width:240px;background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
+#expr{position:absolute;left:10px;bottom:10px;width:240px;max-width:calc(50% - 15px);background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
 #expr h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #expr:not(.open) .bs{display:none}
 #expr:not(.open) h2{margin:0}
-#perf{position:absolute;right:10px;bottom:10px;width:270px;max-width:calc(100% - 20px);background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:2}
+#perf{position:absolute;right:10px;bottom:10px;width:270px;max-width:calc(50% - 15px);background:rgba(15,19,23,.78);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:2}
 #perf h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #perf:not(.open) .bs{display:none}
 #perf:not(.open) h2{margin:0}
@@ -65,7 +65,7 @@ body.novideo .picture video{visibility:hidden}
   body:not(.puppet) #view3d{display:none}
   #cam{display:flex;flex-direction:column;overflow:auto}
   .picture{position:relative;inset:auto;width:100%;flex:0 1 auto;aspect-ratio:var(--ar,16/9);min-height:0}
-  #expr{position:static;width:auto;margin:8px;flex:0 0 auto}
+  #expr{position:static;width:auto;max-width:none;margin:8px;flex:0 0 auto}
   #perf{position:static;width:auto;max-width:none;margin:0 8px 8px;flex:0 0 auto}
   #hint{display:none}
 }
@@ -136,17 +136,17 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
   "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
   "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs",
-  "./js/core.js": "./js/core.js?v=20260912-1353",
-  "./js/engines.js": "./js/engines.js?v=20260912-1353",
-  "./js/skeleton.js": "./js/skeleton.js?v=20260912-1353",
-  "./js/eyes.js": "./js/eyes.js?v=20260912-1353",
-  "./js/character.js": "./js/character.js?v=20260912-1353",
-  "./js/phone.js": "./js/phone.js?v=20260912-1353",
-  "./js/overlay.js": "./js/overlay.js?v=20260912-1353",
-  "./js/camera.js": "./js/camera.js?v=20260912-1353",
-  "./js/threads.js": "./js/threads.js?v=20260912-1353",
-  "./js/monitor.js": "./js/monitor.js?v=20260912-1353",
-  "./js/main.js": "./js/main.js?v=20260912-1353"
+  "./js/core.js": "./js/core.js?v=20260912-1432",
+  "./js/engines.js": "./js/engines.js?v=20260912-1432",
+  "./js/skeleton.js": "./js/skeleton.js?v=20260912-1432",
+  "./js/eyes.js": "./js/eyes.js?v=20260912-1432",
+  "./js/character.js": "./js/character.js?v=20260912-1432",
+  "./js/phone.js": "./js/phone.js?v=20260912-1432",
+  "./js/overlay.js": "./js/overlay.js?v=20260912-1432",
+  "./js/camera.js": "./js/camera.js?v=20260912-1432",
+  "./js/threads.js": "./js/threads.js?v=20260912-1432",
+  "./js/monitor.js": "./js/monitor.js?v=20260912-1432",
+  "./js/main.js": "./js/main.js?v=20260912-1432"
 } }
 </script>
 <!-- The code lives in js/ (what is where: CODE_MAP.md). Every module carries the same ?v= stamp through the import map above,
@@ -154,6 +154,6 @@ body.oncamera #avatarInfo{top:auto!important;bottom:8px;z-index:2;background:#0f
 <script>
 if (location.protocol === 'file:') document.getElementById('loading').innerHTML = '<div class="box"><b>Open this page through an address</b><br><small>The browser does not load the page\'s modules from a file. Double-click open-local.cmd (a local address on this computer) or use the live address.</small></div>';
 </script>
-<script type="module" src="js/main.js?v=20260912-1353"></script>
+<script type="module" src="js/main.js?v=20260912-1432"></script>
 </body>
 </html>
